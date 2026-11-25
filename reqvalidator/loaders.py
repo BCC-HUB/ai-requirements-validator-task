@@ -12,6 +12,7 @@ import re
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import ClassVar
 
 from reqvalidator.document import Document, Line, file_sha256
 
@@ -169,7 +170,9 @@ def _load_docx(path: Path):
             if level:
                 if title is None and level == 1:
                     title = text
-                lines.append(Line(no=0, text=f"{'#' * level} {text}", heading_level=level, ref=f"абзац {para_no}"))
+                lines.append(
+                    Line(no=0, text=f"{'#' * level} {text}", heading_level=level, ref=f"абзац {para_no}")
+                )
             else:
                 is_list = child.find(".//{*}numPr") is not None or "list" in style.lower()
                 prefix = "- " if is_list else ""
@@ -187,7 +190,9 @@ def _load_docx(path: Path):
                         continue  # объединённые ячейки python-docx отдаёт повторно
                     cells.append(value)
                 lines.append(
-                    Line(no=0, text="| " + " | ".join(cells) + " |", ref=f"таблица {table_no}, строка {r_idx}")
+                    Line(
+                        no=0, text="| " + " | ".join(cells) + " |", ref=f"таблица {table_no}, строка {r_idx}"
+                    )
                 )
             lines.append(Line(no=0, text=""))
     if title is None:
@@ -254,7 +259,9 @@ def _load_pdf(path: Path):
             continue
         page_line += 1
         kind = it.get("heading")
-        level = level_of.get(round(it["size"], 1), 0) if kind == "size" else (bold_level if kind == "bold" else 0)
+        level = (
+            level_of.get(round(it["size"], 1), 0) if kind == "size" else (bold_level if kind == "bold" else 0)
+        )
         text = it["text"]
         if level:
             text = f"{'#' * level} {text}"
@@ -263,7 +270,11 @@ def _load_pdf(path: Path):
         lines.append(Line(no=0, text=text, heading_level=level, page=it["page"], page_line=page_line))
         page_line += it.get("extra_lines", 0)
 
-    if not title and meta_title and not re.search(r"untitled|microsoft word|\.docx?$|\.pdf$", meta_title, re.I):
+    if (
+        not title
+        and meta_title
+        and not re.search(r"untitled|microsoft word|\.docx?$|\.pdf$", meta_title, re.I)
+    ):
         title = meta_title
     if not title:
         title = next((ln.text.strip() for ln in lines if ln.text.strip()), None)
@@ -295,8 +306,16 @@ def _pdf_page_items(page, pno: int) -> list[dict]:
             continue
         bboxes.append(t.bbox)
         items.append(
-            {"page": pno, "top": t.bbox[1], "bottom": t.bbox[3], "x0": t.bbox[0], "kind": "table",
-             "rows": clean_rows, "size": 0, "text": ""}
+            {
+                "page": pno,
+                "top": t.bbox[1],
+                "bottom": t.bbox[3],
+                "x0": t.bbox[0],
+                "kind": "table",
+                "rows": clean_rows,
+                "size": 0,
+                "text": "",
+            }
         )
 
     def inside(word) -> bool:
@@ -407,6 +426,7 @@ _PAGE_NO = re.compile(r"^(?:стр\.?|страница|page|с\.)?\s*\d{1,4}(?:\
 
 def _drop_running_headers(items: list[dict], n_pages: int) -> list[dict]:
     """Удалить колонтитулы: повторяющиеся на многих страницах строки у края листа и номера страниц."""
+
     def key(it: dict) -> str:
         return re.sub(r"\d+", "#", it["text"].strip().lower())
 
@@ -418,16 +438,32 @@ def _drop_running_headers(items: list[dict], n_pages: int) -> list[dict]:
     repeated = {k for k, pages in pages_by_key.items() if len(pages) >= threshold and n_pages > 1}
     out = []
     for it in items:
-        if it["kind"] == "text" and (it["rel"] < 0.07 or it["rel"] > 0.93):
-            if key(it) in repeated or _PAGE_NO.match(it["text"].strip()):
-                continue
+        at_edge = it["kind"] == "text" and (it["rel"] < 0.07 or it["rel"] > 0.93)
+        if at_edge and (key(it) in repeated or _PAGE_NO.match(it["text"].strip())):
+            continue
         out.append(it)
     return out
 
 
 # ---------------------------------------------------------------------------- HTML
 class _HTMLToLines(HTMLParser):
-    BLOCK = {"p", "div", "li", "tr", "br", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "table", "section"}
+    BLOCK: ClassVar[set[str]] = {
+        "p",
+        "div",
+        "li",
+        "tr",
+        "br",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "pre",
+        "blockquote",
+        "table",
+        "section",
+    }
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

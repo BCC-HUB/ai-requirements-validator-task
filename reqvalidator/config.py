@@ -42,21 +42,38 @@ DEFAULTS: dict[str, ProviderDefaults] = {
         base_url="https://generativelanguage.googleapis.com/v1beta",
     ),
     "anthropic": ProviderDefaults(
-        model="claude-opus-5-5", max_output_tokens=32000, timeout=600, concurrency=4, min_interval=0.0,
+        model="claude-opus-5-5",
+        max_output_tokens=32000,
+        timeout=600,
+        concurrency=4,
+        min_interval=0.0,
         effort="high",
     ),
     "openai": ProviderDefaults(
-        model="gpt-4o-mini", max_output_tokens=16000, timeout=300, concurrency=4, min_interval=0.0,
+        model="gpt-4o-mini",
+        max_output_tokens=16000,
+        timeout=300,
+        concurrency=4,
+        min_interval=0.0,
         base_url="https://api.openai.com/v1",
     ),
     "ollama": ProviderDefaults(
-        model="qwen2.5-coder:7b", max_output_tokens=8192, timeout=1200, concurrency=1, min_interval=0.0,
+        model="qwen2.5-coder:7b",
+        max_output_tokens=8192,
+        timeout=1200,
+        concurrency=1,
+        min_interval=0.0,
         base_url="http://localhost:11434",
     ),
     # Claude Code CLI в неинтерактивном режиме (claude -p): использует уже
     # выполненный вход в Claude Code, отдельный API-ключ не нужен.
     "claude-cli": ProviderDefaults(
-        model=None, max_output_tokens=32000, timeout=1200, concurrency=4, min_interval=0.0, effort="high",
+        model=None,
+        max_output_tokens=32000,
+        timeout=1200,
+        concurrency=4,
+        min_interval=0.0,
+        effort="high",
     ),
 }
 

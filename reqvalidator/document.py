@@ -188,7 +188,9 @@ class Document:
         if near is not None and len(hits) > 1:
             hits.sort(key=lambda off: abs(self._offset_to_line(off) - near))
         start = hits[0]
-        return QuoteMatch(self._offset_to_line(start), self._offset_to_line(start + len(needle) - 1), 1.0, True)
+        return QuoteMatch(
+            self._offset_to_line(start), self._offset_to_line(start + len(needle) - 1), 1.0, True
+        )
 
     def locate(self, quote: str, near: int | None = None, min_score: float = 0.8) -> QuoteMatch | None:
         """Найти цитату в документе: сначала точно (после нормализации), затем нечётко.

@@ -17,8 +17,9 @@ def fixtures() -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
-    """Изолировать тесты от настроек LLM в окружении разработчика."""
+def _clean_env(monkeypatch, tmp_path):
+    """Изолировать тесты от настроек LLM разработчика: переменных окружения и файла ./.env."""
+    monkeypatch.chdir(tmp_path)
     for name in (
         "LLM_PROVIDER",
         "GEMINI_API_KEY",

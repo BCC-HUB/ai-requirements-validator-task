@@ -117,9 +117,14 @@ def test_user_key_names_and_new_providers(monkeypatch):
     assert (s.model, s.base_url, s.api_key) == ("deepseek-v4-pro", "https://api.deepseek.com", "d")
 
 
-def test_gemini_is_preferred_when_all_keys_present(monkeypatch):
+def test_provider_priority_claude_then_openrouter_then_gemini(monkeypatch):
     for name in ("GEMINI_API_KEY", "CLAUDE_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
         monkeypatch.setenv(name, "k")
+    s = load_settings()
+    assert (s.provider, s.model, s.effort) == ("anthropic", "claude-opus-5-5", "high")
+    monkeypatch.delenv("CLAUDE_API_KEY")
+    assert load_settings().provider == "openrouter"
+    monkeypatch.delenv("OPENROUTER_API_KEY")
     s = load_settings()
     assert s.provider == "gemini"
     assert s.fallback_models == ("gemini-3.5-flash", "gemini-flash-lite-latest")

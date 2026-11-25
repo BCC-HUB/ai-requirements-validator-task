@@ -82,7 +82,7 @@ DEFAULTS: dict[str, ProviderDefaults] = {
         base_url="https://api.openai.com/v1",
     ),
     "ollama": ProviderDefaults(
-        model="qwen2.5-coder:7b",
+        model="qwen2.5:7b",
         max_output_tokens=8192,
         timeout=1200,
         concurrency=1,
@@ -186,12 +186,13 @@ def detect_provider() -> str:
         if explicit not in PROVIDERS:
             raise ConfigError(f"Неизвестный LLM_PROVIDER={explicit!r}. Допустимо: {', '.join(PROVIDERS)}")
         return explicit
-    if _real_key(_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")):
-        return "gemini"
+    # Порядок: лучшее качество проверки → бесплатный вариант → прочие.
     if _real_key(_env("ANTHROPIC_API_KEY") or _env("CLAUDE_API_KEY")):
         return "anthropic"
     if _real_key(_env("OPENROUTER_API_KEY")):
         return "openrouter"
+    if _real_key(_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")):
+        return "gemini"
     if _real_key(_env("DEEPSEEK_API_KEY")):
         return "deepseek"
     if _real_key(_env("OPENAI_API_KEY")):
@@ -199,9 +200,9 @@ def detect_provider() -> str:
     if _env("OLLAMA_MODEL"):
         return "ollama"
     raise ConfigError(
-        "Не настроен доступ к LLM. Скопируйте .env.example в .env и укажите GEMINI_API_KEY "
-        "(бесплатный ключ: https://aistudio.google.com/apikey) или задайте LLM_PROVIDER и ключ "
-        "другого провайдера. Подробности — в README, раздел «Ключ LLM»."
+        "Не настроен доступ к LLM. Скопируйте .env.example в .env и укажите CLAUDE_API_KEY "
+        "(рекомендуется, https://platform.claude.com/settings/keys) или бесплатный GEMINI_API_KEY "
+        "(https://aistudio.google.com/apikey). Подробности — в README, раздел «Ключ LLM»."
     )
 
 
@@ -232,6 +233,8 @@ def load_settings(
     elif provider == "anthropic":
         api_key = _real_key(_env("ANTHROPIC_API_KEY") or _env("CLAUDE_API_KEY"))
         model = model or _env("ANTHROPIC_MODEL", d.model)
+        # Адрес API задаётся явно; переменную ANTHROPIC_BASE_URL от других инструментов не наследуем.
+        base_url = _env("REQVALIDATOR_ANTHROPIC_BASE_URL")
         effort = _env("ANTHROPIC_EFFORT", effort)
         if not api_key:
             raise ConfigError(

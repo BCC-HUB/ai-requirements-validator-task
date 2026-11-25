@@ -56,6 +56,13 @@ python -m reqvalidator docs/requirements.md reports/requirements-report.md --pro
   заключение было собрано без модели; после этого агент научился возвращаться к временно
   перегруженным моделям и ждать дольше (до ~3 мин).
 * OpenRouter — запросы к Claude Sonnet 5.5 через ключ OpenRouter (прогон учебного документа).
+* DeepSeek — живой API (`deepseek-v4-pro`, `deepseek-flash`): на счёте без средств агент сразу
+  останавливается с понятной ошибкой (HTTP 402) и не пишет отчёт с ложным выводом.
+* Anthropic API — запрос, потоковый ответ и обработка ошибок проверены настоящим SDK на локальной
+  заглушке API ([`tests/test_anthropic_provider.py`](tests/test_anthropic_provider.py)); сама модель
+  Claude Opus 5.5 проверена вживую через Claude Code CLI.
+* Ollama — проверено автотестами с имитацией сервера; в облачной среде разработки запустить
+  локальную модель не удалось.
 
 ---
 
@@ -71,7 +78,7 @@ source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env                 # Windows: copy .env.example .env
-# откройте .env и впишите GEMINI_API_KEY=<ваш ключ> (см. «Ключ LLM» ниже)
+# откройте .env и впишите один ключ: CLAUDE_API_KEY (рекомендуется) или бесплатный GEMINI_API_KEY
 
 python -m reqvalidator docs/requirements.md reports/report.md
 ```
@@ -83,18 +90,34 @@ python -m reqvalidator docs/requirements.md reports/report.md
 
 ## Ключ LLM
 
-Агент работает с любой из поддерживаемых моделей. Рекомендуемый бесплатный вариант — **Google Gemini**.
+Достаточно вписать в `.env` **один** ключ: агент сам выберет провайдера (порядок: Claude →
+OpenRouter → Gemini → DeepSeek → OpenAI → Ollama) и модель по умолчанию.
 
-### Google Gemini (бесплатный тариф Google AI Studio)
+### Рекомендуется: Claude Opus 5.5 (Anthropic API)
+
+Этой моделью сформирован сданный отчёт: при сравнении на документе из задания она нашла больше
+реальных дефектов и дала меньше дубликатов и завышенных оценок, чем бесплатная Gemini.
+
+1. Откройте <https://platform.claude.com/settings/keys>, войдите и нажмите **Create Key**.
+2. Впишите ключ в `.env` в корне репозитория (имя `CLAUDE_API_KEY` или `ANTHROPIC_API_KEY`):
+
+   ```dotenv
+   CLAUDE_API_KEY=ваш_ключ
+   # ANTHROPIC_MODEL=claude-opus-5-5   # по умолчанию; effort — ANTHROPIC_EFFORT (high)
+   ```
+
+Прогон документа из задания — около 16 запросов и 10–15 минут. Без API-ключа ту же модель можно
+использовать через установленный и авторизованный Claude Code: `--provider claude-cli`.
+
+### Бесплатно: Google Gemini (тариф Google AI Studio)
 
 1. Откройте <https://aistudio.google.com/apikey> и войдите аккаунтом Google.
 2. Нажмите **Create API key** и скопируйте ключ.
-3. Впишите его в файл `.env` в корне репозитория:
+3. Впишите его в файл `.env`:
 
    ```dotenv
-   LLM_PROVIDER=gemini
    GEMINI_API_KEY=ваш_ключ
-   GEMINI_MODEL=gemini-flash-latest
+   # GEMINI_MODEL=gemini-flash-latest   # по умолчанию
    ```
 
 `gemini-flash-latest` — алиас Google на актуальную модель Gemini Flash, он не устаревает при выходе
@@ -111,21 +134,31 @@ python -m reqvalidator docs/requirements.md reports/report.md
   переменной `LLM_FALLBACK_MODELS`). Переключение записывается в паспорт отчёта.
 * Прогон документа из задания — около 15–20 запросов и 10–20 минут.
 
+### Локальная модель (Ollama, без ключа)
+
+```bash
+ollama pull qwen2.5:7b              # https://ollama.com — установка Ollama
+echo "LLM_PROVIDER=ollama" >> .env  # модель по умолчанию — qwen2.5:7b (OLLAMA_MODEL)
+python -m reqvalidator docs/requirements.md reports/report.md
+```
+
+Агент сам задаёт окно контекста 32 тыс. токенов (`OLLAMA_NUM_CTX`) — документ целиком передаётся
+модели. Локальные модели 7–8B заметно уступают Claude и Gemini в поиске противоречий; на CPU прогон
+документа из задания занимает часы, рекомендуется GPU.
+
 ### Другие провайдеры
 
 | Провайдер | `LLM_PROVIDER` | Ключ в `.env` | Модель (по умолчанию) | Примечание |
 | :--- | :--- | :--- | :--- | :--- |
+| Anthropic Claude (рекомендуется) | `anthropic` | `CLAUDE_API_KEY` или `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (`claude-opus-5-5`) | лучшее качество |
 | Google Gemini | `gemini` | `GEMINI_API_KEY` | `GEMINI_MODEL` (`gemini-flash-latest`) | бесплатный тариф |
-| Anthropic Claude | `anthropic` | `ANTHROPIC_API_KEY` или `CLAUDE_API_KEY` | `ANTHROPIC_MODEL` (`claude-opus-5-5`) | `pip install anthropic` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` (`anthropic/claude-opus-5.5`) | один ключ к Claude, Gemini, DeepSeek, GPT |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `DEEPSEEK_MODEL` (`deepseek-v4-pro`) | или `deepseek-flash` |
 | OpenAI и совместимые (vLLM, LM Studio) | `openai` | `OPENAI_API_KEY` | `OPENAI_MODEL` (`gpt-4o-mini`) | адрес — `OPENAI_BASE_URL` |
-| Ollama (локально) | `ollama` | не нужен | `OLLAMA_MODEL` (`qwen2.5-coder:7b`) | контекст — `OLLAMA_NUM_CTX` |
+| Ollama (локально) | `ollama` | не нужен | `OLLAMA_MODEL` (`qwen2.5:7b`) | контекст — `OLLAMA_NUM_CTX` |
 | Claude Code CLI | `claude-cli` | не нужен (вход в Claude Code) | `CLAUDE_CLI_MODEL` (модель Claude Code) | `claude -p` без инструментов |
 
-Если `LLM_PROVIDER` не задан, агент берёт первый найденный ключ в порядке Gemini → Claude →
-OpenRouter → DeepSeek → OpenAI → Ollama, так что достаточно вписать в `.env` один ключ; модель
-указывать не обязательно. Провайдер и модель можно переопределить флагами:
+Провайдер и модель можно задать явно (`LLM_PROVIDER` в `.env`) или флагами:
 `--provider openrouter --model google/gemini-3.5-flash`.
 Ключи хранятся только в `.env` (он в `.gitignore`); в репозитории лежит пример без ключа — [`.env.example`](.env.example).
 

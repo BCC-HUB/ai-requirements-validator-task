@@ -1,4 +1,4 @@
-"""Anthropic Claude API через официальный SDK (``pip install anthropic``)."""
+"""Anthropic Claude API через официальный SDK — основной провайдер агента (Claude Opus 5.5)."""
 
 from __future__ import annotations
 
@@ -24,31 +24,41 @@ class AnthropicClient(LLMClient):
         try:
             import anthropic
         except ImportError as exc:
-            raise LLMFatalError("Для провайдера anthropic установите пакет: pip install anthropic") from exc
+            raise LLMAbortError("Не установлен пакет anthropic: pip install -r requirements.txt") from exc
         self._sdk = anthropic
-        # Повторы при 429/5xx/обрывах выполняет сам SDK (экспоненциальная пауза, Retry-After).
-        self._client = anthropic.Anthropic(
-            api_key=settings.api_key,
-            timeout=settings.timeout,
-            max_retries=settings.max_retries,
-        )
+        # SDK делает 2 быстрых повтора (с учётом Retry-After); длинные паузы — на стороне сессии агента.
+        options: dict = {"api_key": settings.api_key, "timeout": settings.timeout, "max_retries": 2}
+        options["base_url"] = settings.base_url or "https://api.anthropic.com"
+        self._client = anthropic.Anthropic(**options)
+        self._use_fallbacks = True
 
-    def complete(self, system: str, prompt: str, *, json_mode: bool = True, stage: str = "") -> LLMResponse:
-        sdk = self._sdk
+    def _kwargs(self, system: str, prompt: str) -> dict:
         kwargs: dict = {
             "model": self.model,
             "max_tokens": self.settings.max_output_tokens,
             "system": system,
             "messages": [{"role": "user", "content": prompt}],
-            "betas": [_FALLBACK_BETA],
-            "fallbacks": "default",
         }
+        if self._use_fallbacks:
+            kwargs["betas"] = [_FALLBACK_BETA]
+            kwargs["fallbacks"] = "default"
         if self.settings.effort:
             kwargs["output_config"] = {"effort": self.settings.effort}
+        return kwargs
+
+    def complete(self, system: str, prompt: str, *, json_mode: bool = True, stage: str = "") -> LLMResponse:
+        sdk = self._sdk
         try:
-            # Потоковый режим: длинные ответы не упираются в таймаут HTTP.
-            with self._client.beta.messages.stream(**kwargs) as stream:
-                message = stream.get_final_message()
+            try:
+                message = self._stream(system, prompt)
+            except sdk.BadRequestError as exc:
+                # Если API или выбранная модель не поддерживает серверный резерв — повторяем без него.
+                text = str(exc.message).lower()
+                if self._use_fallbacks and ("fallback" in text or "beta" in text):
+                    self._use_fallbacks = False
+                    message = self._stream(system, prompt)
+                else:
+                    raise
         except sdk.NotFoundError as exc:
             raise LLMAbortError(f"модель {self.model!r} не найдена: {exc.message}") from exc
         except sdk.AuthenticationError as exc:
@@ -85,6 +95,11 @@ class AnthropicClient(LLMClient):
             output_tokens=usage.output_tokens,
             finish_reason=message.stop_reason,
         )
+
+    def _stream(self, system: str, prompt: str):
+        # Потоковый режим: длинные ответы не упираются в таймаут HTTP.
+        with self._client.beta.messages.stream(**self._kwargs(system, prompt)) as stream:
+            return stream.get_final_message()
 
     def list_models(self) -> list[str]:
         return sorted(m.id for m in self._client.models.list())

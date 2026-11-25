@@ -4,3 +4,4 @@ python-docx>=1.1      # чтение DOCX
 python-dotenv>=1.0    # загрузка ключей и настроек из .env
 pydantic>=2.6         # схемы и валидация ответов модели
 requests>=2.31        # HTTP-клиент для API моделей
+anthropic>=2.14       # официальный SDK Claude API (основная модель — Claude Opus 5.5)

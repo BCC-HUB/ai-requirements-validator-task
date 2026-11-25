@@ -6,19 +6,25 @@ import requests
 
 from reqvalidator.llm.base import (
     LLMClient,
+    LLMError,
     LLMFatalError,
     LLMResponse,
     LLMRetryableError,
     LLMTruncatedError,
+    error_payload,
     parse_retry_after,
+    unavailable,
 )
 
 
 class OpenAICompatibleClient(LLMClient):
+    """Chat Completions API: OpenAI, OpenRouter, DeepSeek и любые совместимые серверы."""
+
     provider = "openai"
 
     def __init__(self, settings, http: requests.Session | None = None):
         super().__init__(settings)
+        self.provider = settings.provider
         self.base_url = settings.base_url or "https://api.openai.com/v1"
         self.http = http or requests.Session()
         # Параметры, которые конкретный сервер отверг; повторный запрос идёт без них.
@@ -31,9 +37,9 @@ class OpenAICompatibleClient(LLMClient):
             headers["Authorization"] = f"Bearer {self.settings.api_key}"
         return headers
 
-    def _body(self, system: str, prompt: str, json_mode: bool) -> dict:
+    def _body(self, model: str | None, system: str, prompt: str, json_mode: bool) -> dict:
         body: dict = {
-            "model": self.model,
+            "model": model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             self._token_param: self.settings.max_output_tokens,
         }
@@ -41,15 +47,21 @@ class OpenAICompatibleClient(LLMClient):
             body["response_format"] = {"type": "json_object"}
         if self.settings.temperature is not None and "temperature" not in self._drop:
             body["temperature"] = self.settings.temperature
+        # OpenRouter принимает единый параметр глубины рассуждений для моделей с reasoning.
+        if self.provider == "openrouter" and self.settings.effort and "reasoning" not in self._drop:
+            body["reasoning"] = {"effort": self.settings.effort}
         return body
 
     def complete(self, system: str, prompt: str, *, json_mode: bool = True, stage: str = "") -> LLMResponse:
+        return self.call_with_fallback(lambda model: self._complete_model(model, system, prompt, json_mode))
+
+    def _complete_model(self, model: str | None, system: str, prompt: str, json_mode: bool) -> LLMResponse:
         for _ in range(4):  # несколько попыток адаптации к параметрам сервера
             try:
                 r = self.http.post(
                     f"{self.base_url}/chat/completions",
                     headers=self._headers(),
-                    json=self._body(system, prompt, json_mode),
+                    json=self._body(model, system, prompt, json_mode),
                     timeout=self.settings.timeout,
                 )
             except requests.Timeout as exc:
@@ -60,7 +72,7 @@ class OpenAICompatibleClient(LLMClient):
                 continue
             break
         if r.status_code != 200:
-            raise self._error(r)
+            raise self._error(r, model)
         data = r.json()
         choice = (data.get("choices") or [{}])[0]
         text = (choice.get("message") or {}).get("content") or ""
@@ -72,7 +84,7 @@ class OpenAICompatibleClient(LLMClient):
             raise LLMRetryableError(f"пустой ответ модели (finish_reason={finish})")
         return LLMResponse(
             text=text,
-            model=data.get("model") or self.model,
+            model=data.get("model") or model,
             input_tokens=usage.get("prompt_tokens"),
             output_tokens=usage.get("completion_tokens"),
             finish_reason=finish,
@@ -89,22 +101,26 @@ class OpenAICompatibleClient(LLMClient):
         if "temperature" in low and "temperature" not in self._drop and self.settings.temperature is not None:
             self._drop.add("temperature")
             return True
+        if "reasoning" in low and "reasoning" not in self._drop and self.provider == "openrouter":
+            self._drop.add("reasoning")
+            return True
         return False
 
-    def _error(self, r: requests.Response) -> Exception:
-        try:
-            message = (r.json().get("error") or {}).get("message") or r.text[:300]
-        except ValueError:
-            message = r.text[:300]
+    def _error(self, r: requests.Response, model: str | None = None) -> LLMError:
+        message = error_payload(r).get("message") or r.text[:300]
+        if r.status_code == 503:
+            return unavailable(LLMRetryableError(f"модель {model} перегружена (HTTP 503): {message}"))
         if r.status_code == 429 or r.status_code >= 500:
             return LLMRetryableError(
                 f"HTTP {r.status_code}: {message}",
                 retry_after=parse_retry_after(r.headers.get("retry-after")),
             )
+        if r.status_code == 402:
+            return LLMFatalError(f"на счёте провайдера недостаточно средств (HTTP 402): {message}")
         if r.status_code in (401, 403):
             return LLMFatalError(f"ключ отклонён (HTTP {r.status_code}): {message}")
         if r.status_code == 404:
-            return LLMFatalError(f"модель или адрес не найдены (HTTP 404): {message}")
+            return unavailable(LLMFatalError(f"модель {model!r} или адрес не найдены (HTTP 404): {message}"))
         return LLMFatalError(f"HTTP {r.status_code}: {message}")
 
     def list_models(self) -> list[str]:

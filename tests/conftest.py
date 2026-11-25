@@ -35,6 +35,12 @@ def _clean_env(monkeypatch):
         "LLM_TEMPERATURE",
         "LLM_MIN_INTERVAL",
         "LLM_CONCURRENCY",
+        "CLAUDE_API_KEY",
+        "OPENROUTER_API_KEY",
+        "OPENROUTER_MODEL",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_MODEL",
+        "LLM_FALLBACK_MODELS",
     ):
         monkeypatch.delenv(name, raising=False)
     yield

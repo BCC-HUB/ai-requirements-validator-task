@@ -179,7 +179,7 @@ class Pipeline:
                 )
                 for r in self.session.records
             ],
-            warnings=list(dict.fromkeys(self.warnings)),
+            warnings=list(dict.fromkeys(self.warnings + self.session.client.switches)),
         )
         return AnalysisResult(
             run=run,

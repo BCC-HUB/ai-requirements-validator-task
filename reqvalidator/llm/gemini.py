@@ -6,11 +6,14 @@ import requests
 
 from reqvalidator.llm.base import (
     LLMClient,
+    LLMError,
     LLMFatalError,
     LLMResponse,
     LLMRetryableError,
     LLMTruncatedError,
+    error_payload,
     parse_retry_after,
+    unavailable,
 )
 
 
@@ -27,7 +30,10 @@ class GeminiClient(LLMClient):
         return {"x-goog-api-key": self.settings.api_key or "", "Content-Type": "application/json"}
 
     def complete(self, system: str, prompt: str, *, json_mode: bool = True, stage: str = "") -> LLMResponse:
-        model = (self.model or "").removeprefix("models/")
+        return self.call_with_fallback(lambda model: self._complete_model(model, system, prompt, json_mode))
+
+    def _complete_model(self, model: str | None, system: str, prompt: str, json_mode: bool) -> LLMResponse:
+        model = (model or "").removeprefix("models/")
         url = f"{self.base_url}/models/{model}:generateContent"
         generation: dict = {"maxOutputTokens": self.settings.max_output_tokens}
         if json_mode:
@@ -46,7 +52,7 @@ class GeminiClient(LLMClient):
         except requests.RequestException as exc:
             raise LLMRetryableError(f"сетевая ошибка Gemini: {exc}") from exc
         if r.status_code != 200:
-            raise self._error(r)
+            raise self._error(r, model)
         data = r.json()
         feedback = data.get("promptFeedback") or {}
         if feedback.get("blockReason"):
@@ -75,11 +81,9 @@ class GeminiClient(LLMClient):
             raise LLMRetryableError(f"Gemini вернул ответ без текста (finishReason={finish})")
         return resp
 
-    def _error(self, r: requests.Response) -> Exception:
-        try:
-            err = r.json().get("error", {})
-        except ValueError:
-            err = {}
+    def _error(self, r: requests.Response, model: str | None = None) -> LLMError:
+        model = model or self.model
+        err = error_payload(r)
         message = err.get("message") or r.text[:300]
         status = err.get("status", "")
         details = err.get("details") or []
@@ -93,17 +97,23 @@ class GeminiClient(LLMClient):
                     if "perday" in str(v.get("quotaId", "")).lower():
                         per_day = True
             if per_day:
-                return LLMFatalError(
-                    "исчерпана дневная квота бесплатного тарифа Gemini для этой модели. "
-                    "Повторите завтра или укажите другую модель в GEMINI_MODEL."
+                return unavailable(
+                    LLMFatalError(
+                        f"исчерпана дневная квота бесплатного тарифа Gemini для модели {model}. "
+                        "Повторите завтра или укажите другую модель в GEMINI_MODEL."
+                    )
                 )
             return LLMRetryableError(f"лимит запросов Gemini (429): {message}", retry_after=retry)
-        if r.status_code >= 500 or status in ("UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED"):
+        if r.status_code == 503 or status == "UNAVAILABLE":
+            return unavailable(LLMRetryableError(f"модель {model} перегружена (503): {message}"))
+        if r.status_code >= 500 or status in ("INTERNAL", "DEADLINE_EXCEEDED"):
             return LLMRetryableError(f"Gemini временно недоступен ({r.status_code}): {message}")
         if r.status_code == 404:
-            return LLMFatalError(
-                f"модель {self.model!r} не найдена ({message}). "
-                "Список доступных моделей: python -m reqvalidator --list-models"
+            return unavailable(
+                LLMFatalError(
+                    f"модель {model!r} недоступна ({message}). "
+                    "Список доступных моделей: python -m reqvalidator --list-models"
+                )
             )
         if r.status_code in (401, 403) or "API key" in message:
             return LLMFatalError(

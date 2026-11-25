@@ -218,7 +218,12 @@ def test_gemini_daily_quota_is_fatal():
     [
         (404, {"error": {"message": "models/x is not found"}}, LLMFatalError, "list-models"),
         (400, {"error": {"message": "API key not valid"}}, LLMFatalError, "GEMINI_API_KEY"),
-        (503, {"error": {"message": "overloaded", "status": "UNAVAILABLE"}}, LLMRetryableError, "недоступен"),
+        (
+            503,
+            {"error": {"message": "overloaded", "status": "UNAVAILABLE"}},
+            LLMRetryableError,
+            "перегружена",
+        ),
     ],
 )
 def test_gemini_error_mapping(status, payload, exc, match):
@@ -352,3 +357,58 @@ def test_claude_cli_success_and_errors(monkeypatch):
     monkeypatch.setattr(subprocess, "run", missing)
     with pytest.raises(LLMFatalError, match="не найден"):
         client.complete("s", "p")
+
+
+def test_gemini_falls_back_to_next_model_when_overloaded():
+    overloaded = [
+        {"error": {"code": 503, "message": "high demand", "status": "UNAVAILABLE"}}
+    ]  # Google: список
+    ok = {
+        "candidates": [{"content": {"parts": [{"text": '{"value": 1}'}]}, "finishReason": "STOP"}],
+        "modelVersion": "gemini-backup",
+    }
+    http = FakeHTTP([(503, overloaded, None), (200, ok, None), (200, ok, None)])
+    client = GeminiClient(
+        fake_settings(
+            base_url="https://g.test/v1beta", model="gemini-main", fallback_models=("gemini-backup",)
+        ),
+        http=http,
+    )
+    assert client.complete("s", "u").model == "gemini-backup"
+    assert http.requests[0][1].endswith("/models/gemini-main:generateContent")
+    assert http.requests[1][1].endswith("/models/gemini-backup:generateContent")
+    client.complete("s", "u")  # модель остаётся переключённой
+    assert http.requests[2][1].endswith("/models/gemini-backup:generateContent")
+    assert client.switches and "gemini-main" in client.switches[0]
+
+
+def test_unavailable_model_without_fallback_raises():
+    gone = {"error": {"code": 404, "message": "no longer available to new users"}}
+    client, _ = _gemini([(404, gone, None)])
+    with pytest.raises(LLMFatalError, match="недоступна"):
+        client.complete("s", "u")
+
+
+def test_openai_list_error_body_insufficient_credits_and_404_fallback():
+    http = FakeHTTP(
+        [
+            (402, {"error": {"message": "requires more credits"}}, None),
+            (404, [{"error": {"message": "model not found"}}], None),
+            (
+                200,
+                {
+                    "choices": [{"message": {"content": '{"value": 1}'}, "finish_reason": "stop"}],
+                    "model": "b",
+                },
+                None,
+            ),
+        ]
+    )
+    client = OpenAICompatibleClient(
+        fake_settings(provider="openrouter", model="a", fallback_models=("b",), effort="high"), http=http
+    )
+    with pytest.raises(LLMFatalError, match="недостаточно средств"):
+        client.complete("s", "u")
+    assert http.requests[0][2]["json"]["reasoning"] == {"effort": "high"}
+    assert client.complete("s", "u").model == "b"
+    assert client.provider == "openrouter"

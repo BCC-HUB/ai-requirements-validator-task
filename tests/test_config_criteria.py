@@ -102,3 +102,26 @@ def test_agent_version_reports_commit():
     v = agent_version(ignore_paths=[Path("reports/report.md")])
     assert v.version
     assert "коммит" in v.label
+
+
+def test_user_key_names_and_new_providers(monkeypatch):
+    monkeypatch.setenv("CLAUDE_API_KEY", "c")
+    s = load_settings()
+    assert (s.provider, s.api_key, s.model) == ("anthropic", "c", "claude-opus-5-5")
+    monkeypatch.delenv("CLAUDE_API_KEY")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "o")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    s = load_settings()
+    assert (s.provider, s.base_url, s.effort) == ("openrouter", "https://openrouter.ai/api/v1", "high")
+    s = load_settings(provider="deepseek")
+    assert (s.model, s.base_url, s.api_key) == ("deepseek-chat", "https://api.deepseek.com", "d")
+
+
+def test_gemini_is_preferred_when_all_keys_present(monkeypatch):
+    for name in ("GEMINI_API_KEY", "CLAUDE_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
+        monkeypatch.setenv(name, "k")
+    s = load_settings()
+    assert s.provider == "gemini"
+    assert s.fallback_models == ("gemini-3.5-flash", "gemini-flash-lite-latest")
+    monkeypatch.setenv("LLM_FALLBACK_MODELS", " a , b ,")
+    assert load_settings().fallback_models == ("a", "b")

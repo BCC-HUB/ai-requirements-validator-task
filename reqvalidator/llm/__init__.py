@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from reqvalidator.config import Settings
+from reqvalidator.config import OPENAI_COMPATIBLE, Settings
 from reqvalidator.llm.base import (
     LLMClient,
     LLMError,
@@ -34,7 +34,7 @@ def create_client(settings: Settings) -> LLMClient:
         from reqvalidator.llm.gemini import GeminiClient
 
         return GeminiClient(settings)
-    if settings.provider == "openai":
+    if settings.provider in OPENAI_COMPATIBLE:
         from reqvalidator.llm.openai_compat import OpenAICompatibleClient
 
         return OpenAICompatibleClient(settings)

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,8 +24,17 @@ class LLMResponse:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
+log = logging.getLogger("reqvalidator")
+
+
 class LLMError(RuntimeError):
-    """Базовая ошибка обращения к модели."""
+    """Базовая ошибка обращения к модели.
+
+    ``model_unavailable`` — модель перегружена, снята с обслуживания или исчерпала квоту:
+    имеет смысл переключиться на резервную модель (см. ``LLMClient.call_with_fallback``).
+    """
+
+    model_unavailable: bool = False
 
 
 class LLMFatalError(LLMError):
@@ -53,6 +65,27 @@ class LLMClient(ABC):
     def __init__(self, settings: Settings):
         self.settings = settings
         self.model = settings.model
+        self._fallbacks = [m for m in settings.fallback_models if m and m != settings.model]
+        self._switch_lock = threading.Lock()
+        self.switches: list[str] = []
+
+    def call_with_fallback(self, call: Callable[[str | None], LLMResponse]) -> LLMResponse:
+        """Вызвать ``call(model)``; если модель недоступна — перейти на следующую резервную модель."""
+        while True:
+            model = self.model
+            try:
+                return call(model)
+            except LLMError as exc:
+                if not exc.model_unavailable:
+                    raise
+                with self._switch_lock:
+                    if self.model == model:  # другой поток мог уже переключить модель
+                        if not self._fallbacks:
+                            raise
+                        self.model = self._fallbacks.pop(0)
+                        note = f"Модель {model} недоступна ({exc}); прогон продолжен на модели {self.model}"
+                        log.warning(note)
+                        self.switches.append(note)
 
     @abstractmethod
     def complete(self, system: str, prompt: str, *, json_mode: bool = True, stage: str = "") -> LLMResponse:
@@ -127,6 +160,25 @@ def _first_balanced(text: str) -> str | None:
             if not stack:
                 return text[start : i + 1]
     return None
+
+
+def error_payload(response) -> dict:
+    """Тело ошибки API как словарь (Google иногда отдаёт список из одного объекта)."""
+    try:
+        data = response.json()
+    except ValueError:
+        return {}
+    if isinstance(data, list):
+        data = data[0] if data and isinstance(data[0], dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    err = data.get("error")
+    return err if isinstance(err, dict) else ({"message": str(err)} if err else {})
+
+
+def unavailable(exc: LLMError) -> LLMError:
+    exc.model_unavailable = True
+    return exc
 
 
 def parse_retry_after(value: str | None) -> float | None:

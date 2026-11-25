@@ -8,7 +8,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-PROVIDERS = ("gemini", "anthropic", "openai", "ollama", "claude-cli")
+PROVIDERS = ("gemini", "anthropic", "openrouter", "deepseek", "openai", "ollama", "claude-cli")
+# Провайдеры, работающие через OpenAI-совместимый Chat Completions API.
+OPENAI_COMPATIBLE = ("openai", "openrouter", "deepseek")
 
 # Значения-заглушки из .env.example, которые нельзя принимать за настоящий ключ.
 _PLACEHOLDER_MARKERS = ("your_", "_here", "changeme", "<", "xxx")
@@ -27,6 +29,7 @@ class ProviderDefaults:
     min_interval: float
     effort: str | None = None
     base_url: str | None = None
+    fallback_models: tuple[str, ...] = ()
 
 
 DEFAULTS: dict[str, ProviderDefaults] = {
@@ -40,6 +43,9 @@ DEFAULTS: dict[str, ProviderDefaults] = {
         concurrency=1,
         min_interval=4.0,
         base_url="https://generativelanguage.googleapis.com/v1beta",
+        # Если основная модель перегружена (503), снята для новых ключей (404) или исчерпала
+        # дневную квоту, агент продолжает прогон на следующей модели из списка.
+        fallback_models=("gemini-3.5-flash", "gemini-flash-lite-latest"),
     ),
     "anthropic": ProviderDefaults(
         model="claude-opus-5-5",
@@ -48,6 +54,24 @@ DEFAULTS: dict[str, ProviderDefaults] = {
         concurrency=4,
         min_interval=0.0,
         effort="high",
+    ),
+    # OpenRouter — один ключ к моделям разных компаний (Claude, Gemini, DeepSeek, GPT).
+    "openrouter": ProviderDefaults(
+        model="anthropic/claude-opus-5.5",
+        max_output_tokens=32000,
+        timeout=600,
+        concurrency=4,
+        min_interval=0.0,
+        effort="high",
+        base_url="https://openrouter.ai/api/v1",
+    ),
+    "deepseek": ProviderDefaults(
+        model="deepseek-chat",
+        max_output_tokens=8192,
+        timeout=600,
+        concurrency=4,
+        min_interval=0.0,
+        base_url="https://api.deepseek.com",
     ),
     "openai": ProviderDefaults(
         model="gpt-4o-mini",
@@ -96,6 +120,7 @@ class Settings:
     effort: str | None = None
     cli_path: str = "claude"
     num_ctx: int = 32768
+    fallback_models: tuple[str, ...] = ()
 
     @property
     def model_label(self) -> str:
@@ -163,8 +188,12 @@ def detect_provider() -> str:
         return explicit
     if _real_key(_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")):
         return "gemini"
-    if _real_key(_env("ANTHROPIC_API_KEY")):
+    if _real_key(_env("ANTHROPIC_API_KEY") or _env("CLAUDE_API_KEY")):
         return "anthropic"
+    if _real_key(_env("OPENROUTER_API_KEY")):
+        return "openrouter"
+    if _real_key(_env("DEEPSEEK_API_KEY")):
+        return "deepseek"
     if _real_key(_env("OPENAI_API_KEY")):
         return "openai"
     if _env("OLLAMA_MODEL"):
@@ -201,11 +230,26 @@ def load_settings(
                 "и запишите его в файл .env (см. .env.example)."
             )
     elif provider == "anthropic":
-        api_key = _real_key(_env("ANTHROPIC_API_KEY"))
+        api_key = _real_key(_env("ANTHROPIC_API_KEY") or _env("CLAUDE_API_KEY"))
         model = model or _env("ANTHROPIC_MODEL", d.model)
         effort = _env("ANTHROPIC_EFFORT", effort)
         if not api_key:
-            raise ConfigError("Не задан ANTHROPIC_API_KEY (ключ: https://platform.claude.com/settings/keys).")
+            raise ConfigError(
+                "Не задан ANTHROPIC_API_KEY (или CLAUDE_API_KEY); ключ: https://platform.claude.com/settings/keys."
+            )
+    elif provider == "openrouter":
+        api_key = _real_key(_env("OPENROUTER_API_KEY"))
+        model = model or _env("OPENROUTER_MODEL", d.model)
+        base_url = _env("OPENROUTER_BASE_URL", base_url)
+        effort = _env("OPENROUTER_EFFORT", effort)
+        if not api_key:
+            raise ConfigError("Не задан OPENROUTER_API_KEY (ключ: https://openrouter.ai/keys).")
+    elif provider == "deepseek":
+        api_key = _real_key(_env("DEEPSEEK_API_KEY"))
+        model = model or _env("DEEPSEEK_MODEL", d.model)
+        base_url = _env("DEEPSEEK_BASE_URL", base_url)
+        if not api_key:
+            raise ConfigError("Не задан DEEPSEEK_API_KEY (ключ: https://platform.deepseek.com/api_keys).")
     elif provider == "openai":
         api_key = _real_key(_env("OPENAI_API_KEY"))
         model = model or _env("OPENAI_MODEL", d.model)
@@ -242,4 +286,12 @@ def load_settings(
         effort=effort,
         cli_path=_env("CLAUDE_CLI_PATH", "claude") or "claude",
         num_ctx=_int("OLLAMA_NUM_CTX", 32768),
+        fallback_models=_fallbacks(d.fallback_models),
     )
+
+
+def _fallbacks(default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.getenv("LLM_FALLBACK_MODELS")
+    if raw is None:
+        return default
+    return tuple(m.strip() for m in raw.split(",") if m.strip())

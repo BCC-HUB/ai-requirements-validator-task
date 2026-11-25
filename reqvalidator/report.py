@@ -35,6 +35,8 @@ PROVIDER_RU = {
     "gemini": "Google Gemini API",
     "anthropic": "Anthropic Claude API",
     "openai": "OpenAI-совместимый API",
+    "openrouter": "OpenRouter",
+    "deepseek": "DeepSeek API",
     "ollama": "Ollama (локально)",
     "claude-cli": "Claude Code CLI",
 }

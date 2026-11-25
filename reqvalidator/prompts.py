@@ -360,7 +360,7 @@ def verdict_prompt(title: str, stats: str, dev: str, test: str, findings_block: 
 
 Нужно:
 - summary — 2–4 предложения: можно ли по документу начинать разработку и тестирование и почему; ссылайся на ID замечаний;
-- development_rationale и testing_rationale — по 1–3 предложения;
+- development_rationale и testing_rationale — по 1–3 предложения с причинами; не начинай их с повтора статуса («начинать нельзя»), он уже выведен в отчёте;
 - priorities — 5–8 пунктов «что исправить в первую очередь», в порядке важности. Каждый пункт: title (кратко), action (что конкретно сделать в документе), finding_ids (ID замечаний из списка выше). Объединяй связанные замечания в один пункт.
 
 {_schema(VERDICT_EXAMPLE)}"""

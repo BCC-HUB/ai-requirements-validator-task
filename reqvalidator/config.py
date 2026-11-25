@@ -277,7 +277,7 @@ def load_settings(
         temperature=_float("LLM_TEMPERATURE", None),
         max_output_tokens=_int("LLM_MAX_OUTPUT_TOKENS", d.max_output_tokens),
         timeout=_float("LLM_TIMEOUT", d.timeout) or d.timeout,
-        max_retries=_int("LLM_MAX_RETRIES", 5),
+        max_retries=_int("LLM_MAX_RETRIES", 6),
         min_interval=_float("LLM_MIN_INTERVAL", d.min_interval) or 0.0,
         concurrency=max(1, _int("LLM_CONCURRENCY", d.concurrency)),
         batch_size=max(1, _int("REQVALIDATOR_BATCH_SIZE", 6)),

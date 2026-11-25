@@ -291,7 +291,7 @@ class LLMSession:
                 if attempt > self.max_retries:
                     raise LLMFatalError(f"Модель недоступна после {attempt} попыток: {exc}") from exc
                 delay = (
-                    exc.retry_after if exc.retry_after is not None else min(60.0, 2.0 * 2 ** (attempt - 1))
+                    exc.retry_after if exc.retry_after is not None else min(90.0, 3.0 * 2 ** (attempt - 1))
                 )
                 delay = min(delay, 120.0) + random.uniform(0, 1.0)
                 log.warning(

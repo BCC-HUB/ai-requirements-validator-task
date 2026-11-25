@@ -221,7 +221,13 @@ def render_markdown(res: AnalysisResult) -> str:
     w(f"| Длительность прогона | {fmt_duration(run.duration_s)} |")
     provider = PROVIDER_RU.get(run.provider, run.provider)
     reported = ", ".join(f"`{m}`" for m in run.models_reported)
-    model_line = f"`{cell(run.model)}` (провайдер: {provider})"
+    endpoint = run.settings.get("endpoint")
+    via = (
+        f", адрес API: {endpoint}"
+        if endpoint and run.provider in ("openai", "openrouter", "deepseek")
+        else ""
+    )
+    model_line = f"`{cell(run.model)}` (провайдер: {provider}{via})"
     if reported and run.models_reported != [run.model]:
         model_line += f"; модель по ответу API: {reported}"
     w(f"| Модель | {model_line} |")

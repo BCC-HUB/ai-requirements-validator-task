@@ -56,24 +56,35 @@ python -m reqvalidator docs/requirements.md reports/report.md
    ```
 
 `gemini-flash-latest` — алиас Google на актуальную модель Gemini Flash, он не устаревает при выходе
-новых версий. Можно указать конкретную модель (например, `gemini-2.5-flash`); список моделей,
+новых версий. Можно указать конкретную модель (например, `gemini-3.5-flash`); список моделей,
 доступных вашему ключу: `python -m reqvalidator --list-models`.
 
-Бесплатный тариф ограничивает число запросов в минуту, поэтому для Gemini агент по умолчанию
-шлёт запросы последовательно с паузой 4 с и сам повторяет запрос после ответа 429 (с задержкой,
-которую сообщает API). Один прогон — около 12–15 запросов.
+Особенности бесплатного тарифа, которые агент учитывает сам:
+
+* **Лимит запросов в минуту.** Запросы идут последовательно с паузой 4 с; после ответа 429 агент
+  ждёт столько, сколько указал API, и повторяет запрос.
+* **Перегрузка и снятые модели.** Если модель отвечает «high demand» (503), недоступна новым ключам
+  (404) или исчерпала дневную квоту, прогон продолжается на резервной модели
+  (`gemini-flash-latest` → `gemini-3.5-flash` → `gemini-flash-lite-latest`, список меняется
+  переменной `LLM_FALLBACK_MODELS`). Переключение записывается в паспорт отчёта.
+* Прогон документа из задания — около 15–20 запросов и 15–25 минут.
 
 ### Другие провайдеры
 
 | Провайдер | `LLM_PROVIDER` | Ключ в `.env` | Модель (по умолчанию) | Примечание |
 | :--- | :--- | :--- | :--- | :--- |
 | Google Gemini | `gemini` | `GEMINI_API_KEY` | `GEMINI_MODEL` (`gemini-flash-latest`) | бесплатный тариф |
-| Anthropic Claude | `anthropic` | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (`claude-opus-5-5`) | `pip install anthropic` |
-| OpenAI и совместимые (vLLM, LM Studio, OpenRouter) | `openai` | `OPENAI_API_KEY` | `OPENAI_MODEL` (`gpt-4o-mini`) | адрес — `OPENAI_BASE_URL` |
+| Anthropic Claude | `anthropic` | `ANTHROPIC_API_KEY` или `CLAUDE_API_KEY` | `ANTHROPIC_MODEL` (`claude-opus-5-5`) | `pip install anthropic` |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` (`anthropic/claude-opus-5.5`) | один ключ к Claude, Gemini, DeepSeek, GPT |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `DEEPSEEK_MODEL` (`deepseek-chat`) | |
+| OpenAI и совместимые (vLLM, LM Studio) | `openai` | `OPENAI_API_KEY` | `OPENAI_MODEL` (`gpt-4o-mini`) | адрес — `OPENAI_BASE_URL` |
 | Ollama (локально) | `ollama` | не нужен | `OLLAMA_MODEL` (`qwen2.5-coder:7b`) | контекст — `OLLAMA_NUM_CTX` |
 | Claude Code CLI | `claude-cli` | не нужен (вход в Claude Code) | `CLAUDE_CLI_MODEL` (модель Claude Code) | `claude -p` без инструментов |
 
-Провайдер и модель можно переопределить флагами: `--provider anthropic --model claude-sonnet-5-5`.
+Если `LLM_PROVIDER` не задан, агент берёт первый найденный ключ в порядке Gemini → Claude →
+OpenRouter → DeepSeek → OpenAI → Ollama, так что достаточно вписать в `.env` один ключ; модель
+указывать не обязательно. Провайдер и модель можно переопределить флагами:
+`--provider openrouter --model google/gemini-3.5-flash`.
 Ключи хранятся только в `.env` (он в `.gitignore`); в репозитории лежит пример без ключа — [`.env.example`](.env.example).
 
 ---

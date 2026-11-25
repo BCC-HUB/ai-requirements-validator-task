@@ -9,6 +9,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
+from urllib.parse import urlparse
 
 from reqvalidator import prompts
 from reqvalidator.config import Settings
@@ -155,6 +156,7 @@ class Pipeline:
             agent_dirty=version.dirty,
             settings={
                 "temperature": self.settings.temperature,
+                "endpoint": urlparse(self.settings.base_url).netloc if self.settings.base_url else None,
                 "effort": self.settings.effort,
                 "max_output_tokens": self.settings.max_output_tokens,
                 "batch_size": self.opt.batch_size,

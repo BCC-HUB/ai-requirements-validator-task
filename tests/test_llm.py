@@ -412,3 +412,36 @@ def test_openai_list_error_body_insufficient_credits_and_404_fallback():
     assert http.requests[0][2]["json"]["reasoning"] == {"effort": "high"}
     assert client.complete("s", "u").model == "b"
     assert client.provider == "openrouter"
+
+
+def test_overloaded_models_rotate_and_retired_models_are_skipped():
+    over = [{"error": {"code": 503, "message": "high demand", "status": "UNAVAILABLE"}}]
+    gone = {"error": {"code": 404, "message": "no longer available"}}
+    ok = {"candidates": [{"content": {"parts": [{"text": "{}"}]}, "finishReason": "STOP"}]}
+    http = FakeHTTP(
+        [
+            (503, over, None),
+            (404, gone, None),
+            (200, ok, None),  # a перегружена, b снята → c
+            (503, over, None),
+            (200, ok, None),
+        ]
+    )  # c перегружена → a (b исключена)
+    client = GeminiClient(
+        fake_settings(base_url="https://g.test", model="a", fallback_models=("b", "c")), http=http
+    )
+    client.complete("s", "u")
+    assert client.model == "c"
+    client.complete("s", "u")
+    assert client.model == "a"
+    assert [u.rsplit("/", 1)[1].split(":")[0] for _, u, _ in http.requests] == ["a", "b", "c", "c", "a"]
+
+
+def test_all_models_overloaded_raises_retryable_for_session_backoff():
+    over = [{"error": {"code": 503, "message": "high demand", "status": "UNAVAILABLE"}}]
+    http = FakeHTTP([(503, over, None), (503, over, None)])
+    client = GeminiClient(
+        fake_settings(base_url="https://g.test", model="a", fallback_models=("b",)), http=http
+    )
+    with pytest.raises(LLMRetryableError):
+        client.complete("s", "u")

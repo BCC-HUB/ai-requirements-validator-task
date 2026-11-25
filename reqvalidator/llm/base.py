@@ -65,27 +65,49 @@ class LLMClient(ABC):
     def __init__(self, settings: Settings):
         self.settings = settings
         self.model = settings.model
-        self._fallbacks = [m for m in settings.fallback_models if m and m != settings.model]
+        # Кольцо моделей: основная и резервные. Временно перегруженная модель (503) остаётся в кольце,
+        # навсегда недоступная (404, исчерпана дневная квота) исключается.
+        self._models = [settings.model, *(m for m in settings.fallback_models if m and m != settings.model)]
+        self._retired: set[str | None] = set()
         self._switch_lock = threading.Lock()
         self.switches: list[str] = []
 
+    def _after(self, model: str | None) -> list[str | None]:
+        if model not in self._models:
+            return list(self._models)
+        i = self._models.index(model)
+        return self._models[i + 1 :] + self._models[:i]
+
     def call_with_fallback(self, call: Callable[[str | None], LLMResponse]) -> LLMResponse:
-        """Вызвать ``call(model)``; если модель недоступна — перейти на следующую резервную модель."""
+        """Вызвать ``call(model)``; если модель недоступна — перейти на следующую модель кольца.
+
+        Если в рамках одного вызова недоступны все модели, ошибка пробрасывается: временную
+        перегрузку дальше обрабатывает сессия (повтор с нарастающей паузой).
+        """
+        tried: set[str | None] = set()
         while True:
             model = self.model
+            tried.add(model)
             try:
                 return call(model)
             except LLMError as exc:
                 if not exc.model_unavailable:
                     raise
                 with self._switch_lock:
-                    if self.model == model:  # другой поток мог уже переключить модель
-                        if not self._fallbacks:
+                    if isinstance(exc, LLMFatalError):
+                        self._retired.add(model)
+                    if self.model == model:
+                        nxt = next(
+                            (m for m in self._after(model) if m not in self._retired and m not in tried), None
+                        )
+                        if nxt is None:
                             raise
-                        self.model = self._fallbacks.pop(0)
-                        note = f"Модель {model} недоступна ({exc}); прогон продолжен на модели {self.model}"
+                        self.model = nxt
+                        note = f"Модель {model} недоступна ({exc}); прогон продолжен на модели {nxt}"
                         log.warning(note)
                         self.switches.append(note)
+                    elif self.model in tried:  # другой поток уже переключил на опробованную модель
+                        raise
 
     @abstractmethod
     def complete(self, system: str, prompt: str, *, json_mode: bool = True, stage: str = "") -> LLMResponse:

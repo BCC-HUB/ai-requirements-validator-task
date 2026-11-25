@@ -1,0 +1,49 @@
+name: Generate report
+
+# Ручной запуск: агент проверяет docs/requirements.md и выкладывает отчёт артефактом.
+# Ключи берутся из секретов окружения (Settings → Environments), имя окружения —
+# в запросе, т.к. значение environment нельзя подставить из input, поэтому ниже
+# используется одно фиксированное имя; при необходимости замените его.
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Провайдер LLM"
+        type: choice
+        default: anthropic
+        options: [anthropic, gemini, openai]
+      model:
+        description: "Модель (пусто — по умолчанию провайдера)"
+        required: false
+        default: ""
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    environment: ENVIRONMENT_NAME
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          pip install -r requirements.txt anthropic
+      - name: Run agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_BASE_URL: https://openrouter.ai/api/v1
+          TZ: Asia/Almaty
+          REQVALIDATOR_CACHE_DIR: ""
+        run: |
+          ARGS="--provider ${{ inputs.provider }}"
+          if [ -n "${{ inputs.model }}" ]; then ARGS="$ARGS --model ${{ inputs.model }}"; fi
+          python -m reqvalidator docs/requirements.md reports/requirements-report.md $ARGS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: requirements-report
+          path: reports/

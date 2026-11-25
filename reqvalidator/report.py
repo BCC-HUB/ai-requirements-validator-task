@@ -142,6 +142,9 @@ def render_markdown(res: AnalysisResult) -> str:
         r = req_by_id.get(rid)
         return f"{link(rid)} ({r.doc_id})" if r and r.doc_id else link(rid)
 
+    def place(r) -> str:
+        return r.section + (f" · {r.locator}" if r.locator else "")
+
     def section(key: str, title: str) -> None:
         w(f'<a id="{key}"></a>')
         w("")
@@ -299,7 +302,7 @@ def render_markdown(res: AnalysisResult) -> str:
     w("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
     for r in res.requirements:
         w(
-            f"| {link(r.id)} | {cell(r.doc_id or '—')} | {cell(r.section)} | {cell(r.evidence.location)} | "
+            f"| {link(r.id)} | {cell(r.doc_id or '—')} | {cell(place(r))} | {cell(r.evidence.location)} | "
             f"{KIND_RU.get(r.kind, r.kind)} | {cell(r.summary)} | «{cell(r.evidence.quote)}» |"
         )
     w("")
@@ -338,10 +341,13 @@ def render_markdown(res: AnalysisResult) -> str:
     for r in res.requirements:
         chk = checks.get(r.id)
         own = [by_id[i] for i in (chk.finding_ids if chk else []) if i in by_id]
-        title = f"{r.id}" + (f" · {r.doc_id}" if r.doc_id else "") + f" — {r.summary}"
+        primary = [f for f in own if f.scope == "requirement" and f.req_ids and f.req_ids[0] == r.id]
+        related = [f for f in own if f not in primary]
+        label = r.doc_id or r.locator
+        title = f"{r.id}" + (f" · {label}" if label else "") + f" — {r.summary}"
         section(anchor(r.id), f"#### {title}")
         w(f"> «{r.evidence.quote}»  ")
-        w(f"> *{r.evidence.location}; раздел: {r.section or '—'}; тип: {KIND_RU.get(r.kind, r.kind)}*")
+        w(f"> *{r.evidence.location}; раздел: {place(r) or '—'}; тип: {KIND_RU.get(r.kind, r.kind)}*")
         w("")
         if chk is None or all(s == "na" for s in chk.statuses.values()):
             w("⚠️ Результат проверки не получен (см. предупреждения прогона).")
@@ -363,8 +369,21 @@ def render_markdown(res: AnalysisResult) -> str:
             f"{', '.join(bad)}" + (f"; соответствует: {', '.join(ok)}" if ok else "") + "."
         )
         w("")
-        for f in own:
+        for f in primary:
             render_finding(f)
+        if related:
+            w("*Дефекты этого требования, описанные в объединённых замечаниях:*")
+            w("")
+            for f in related:
+                where = (
+                    "замечание к набору"
+                    if f.scope == "set"
+                    else "общее замечание с " + ", ".join(x for x in f.req_ids if x != r.id)
+                )
+                w(
+                    f"- {link(f.id)} · {sev_label(f.severity)} · {crit_label(f.criterion)} — {f.title} ({where})"
+                )
+            w("")
         if chk.rewrite:
             w("**Предлагаемая формулировка:**")
             w("")
@@ -469,12 +488,19 @@ def render_markdown(res: AnalysisResult) -> str:
     w("### Критичные дефекты")
     w("")
     critical = [f for f in confirmed if f.severity == "critical"]
-    if not critical:
-        w("Критичных дефектов не выявлено.")
-        w("")
+    w(
+        f"Критичных дефектов: **{len(critical)}**. Для непроверяемых, противоречивых и неполных формулировок "
+        "ниже перечислены также существенные дефекты (🟠): они не блокируют работу сами по себе, но требуют "
+        "исправления до утверждения документа."
+    )
+    w("")
     groups = list(CRITICAL_GROUPS) + [k for k in DEFECT_TYPES if k not in CRITICAL_GROUPS]
     for g in groups:
-        items = [f for f in critical if f.defect_type == g]
+        if g in CRITICAL_GROUPS:
+            items = [f for f in confirmed if f.defect_type == g and f.severity in ("critical", "major")]
+            items.sort(key=lambda f: f.severity != "critical")
+        else:
+            items = [f for f in critical if f.defect_type == g]
         if not items and g not in CRITICAL_GROUPS:
             continue
         w(f"**{DEFECT_TYPES[g]} формулировки**" if g in CRITICAL_GROUPS else f"**{DEFECT_TYPES[g]}**")
@@ -483,12 +509,12 @@ def render_markdown(res: AnalysisResult) -> str:
             w("Не выявлено.")
             w("")
             continue
-        w("| ID | Требования | Суть | Место |")
-        w("| :--- | :--- | :--- | :--- |")
+        w("| ID | Серьёзность | Требования | Суть | Место |")
+        w("| :--- | :--- | :--- | :--- | :--- |")
         for f in items:
             reqs = ", ".join(ref(x) for x in f.req_ids) or "набор"
-            places = "; ".join(e.location or "?" for e in f.evidence if e.verified) or "—"
-            w(f"| {link(f.id)} | {cell(reqs)} | {cell(f.title)} | {cell(places)} |")
+            places = "; ".join(dict.fromkeys(e.location or "?" for e in f.evidence if e.verified)) or "—"
+            w(f"| {link(f.id)} | {SEV_ICON[f.severity]} | {cell(reqs)} | {cell(f.title)} | {cell(places)} |")
         w("")
 
     # ------------------------------------------------------------ 7. итог

@@ -131,7 +131,7 @@ class Pipeline:
         self._assign_ids(findings, requirements)
         checks = self._requirement_statuses(requirements, checklists, findings)
         set_checks = self._set_statuses(assessments, findings)
-        stats = self._stats(requirements, findings, coverage)
+        stats = self._stats(requirements, findings, coverage, checks)
 
         log.info("[7/7] Итоговое заключение (LLM)")
         verdict = self._verdict(doc, requirements, findings, stats, coverage)
@@ -266,7 +266,8 @@ class Pipeline:
     @staticmethod
     def _catalog(requirements: list[Requirement]) -> str:
         return "\n".join(
-            f"{r.id} [{r.doc_id or '—'}] ({r.evidence.location}) {r.kind}: {r.summary}" for r in requirements
+            f"{r.id} [{r.doc_id or r.locator or '—'}] ({r.evidence.location}) {r.kind}: {r.summary}"
+            for r in requirements
         )
 
     @staticmethod
@@ -353,6 +354,7 @@ class Pipeline:
                 Requirement(
                     id=f"ТР-{i:0{width}d}",
                     doc_id=it.doc_id,
+                    locator=(it.locator or "").strip() or None,
                     section=(it.section or ev.section or "").strip(),
                     kind=kind,
                     summary=(it.summary or ev.quote[:80]).strip(),
@@ -581,7 +583,11 @@ class Pipeline:
 
         def line(tid: str, f: Finding) -> str:
             req = (
-                ", ".join(f"{rid} [{by_req[rid].doc_id or '—'}]" for rid in f.req_ids[:3] if rid in by_req)
+                ", ".join(
+                    f"{rid} [{by_req[rid].doc_id or by_req[rid].locator or '—'}]"
+                    for rid in f.req_ids[:3]
+                    if rid in by_req
+                )
                 or "набор"
             )
             quotes = "; ".join(f"«{e.quote[:160]}» ({e.location or '?'})" for e in f.evidence[:3])
@@ -591,7 +597,9 @@ class Pipeline:
             )
 
         ids = list(temp)
-        chunks = [ids[i : i + 60] for i in range(0, len(ids), 60)]
+        # Одним запросом, чтобы рецензент видел дубликаты между требованиями и уровнями проверки;
+        # делим только очень большие списки.
+        chunks = [ids[i : i + 300] for i in range(0, len(ids), 300)]
 
         def run_chunk(chunk: list[str]):
             block = "\n".join(line(t, temp[t]) for t in chunk)
@@ -628,6 +636,7 @@ class Pipeline:
                 if target is None or target is f or target.status != "confirmed":
                     continue
                 f.status = "rejected"
+                f.merged_into = target_id
                 f.review_note = f"Объединено с замечанием {target_id}: " + (d.reason or "дубликат")
                 for ev in f.evidence:
                     if all(ev.line_start != e.line_start for e in target.evidence) and ev.verified:
@@ -667,6 +676,8 @@ class Pipeline:
             f.id = f"О-{i:02d}"
         temp = self._temp_ids
         for f in findings:
+            if f.merged_into in temp:
+                f.merged_into = temp[f.merged_into].id
             if f.review_note and "замечанием F" in f.review_note:
                 m = re.search(r"замечанием (F\d+)", f.review_note)
                 if m and m.group(1) in temp:
@@ -678,12 +689,23 @@ class Pipeline:
         reqs: list[Requirement], checklists: dict[str, ReqCheckItem], findings: list[Finding]
     ) -> list[RequirementCheck]:
         checks = []
+        by_id = {f.id: f for f in findings}
         for r in reqs:
             item = checklists.get(r.id)
             own = [f for f in findings if f.scope == "requirement" and f.req_ids and f.req_ids[0] == r.id]
+            # Замечание, объединённое с другим, по-прежнему означает нарушение критерия у этого требования:
+            # статус берём с серьёзностью итогового замечания, ссылку ведём на него.
+            effective: list[tuple[str, Finding]] = []
+            for f in own:
+                if f.status == "confirmed":
+                    effective.append((f.criterion, f))
+                elif (
+                    f.merged_into and by_id.get(f.merged_into) and by_id[f.merged_into].status == "confirmed"
+                ):
+                    effective.append((f.criterion, by_id[f.merged_into]))
             statuses: dict[str, str] = {}
             for c in INDIVIDUAL:
-                conf = [f for f in own if f.criterion == c.code and f.status == "confirmed"]
+                conf = [t for code, t in effective if code == c.code]
                 rejected = [f for f in own if f.criterion == c.code and f.status != "confirmed"]
                 mark = (item.checklist.get(c.code, "") if item else "").lower()
                 if conf:
@@ -695,13 +717,14 @@ class Pipeline:
                     statuses[c.code] = "warn"
                 else:
                     statuses[c.code] = "pass"
+            finding_ids = list(dict.fromkeys(t.id for _, t in effective))
             checks.append(
                 RequirementCheck(
                     req_id=r.id,
                     statuses=statuses,
-                    finding_ids=[f.id for f in own if f.status == "confirmed"],
+                    finding_ids=finding_ids,
                     rewrite=(item.rewrite.strip() if item and item.rewrite else None)
-                    if any(f.status == "confirmed" for f in own)
+                    if finding_ids
                     else None,
                 )
             )
@@ -730,9 +753,14 @@ class Pipeline:
         return out
 
     @staticmethod
-    def _stats(reqs: list[Requirement], findings: list[Finding], coverage: list[CoverageRow]) -> Stats:
+    def _stats(
+        reqs: list[Requirement],
+        findings: list[Finding],
+        coverage: list[CoverageRow],
+        checks: list[RequirementCheck],
+    ) -> Stats:
         conf = [f for f in findings if f.status == "confirmed"]
-        with_findings = {f.req_ids[0] for f in conf if f.scope == "requirement" and f.req_ids}
+        with_findings = {c.req_id for c in checks if c.finding_ids}
         considered = [
             c for c in coverage if any(r.id == c.req_id and r.kind in _COVERAGE_KINDS for r in reqs)
         ]
@@ -787,7 +815,11 @@ class Pipeline:
         by_req = {r.id: r for r in reqs}
 
         def where(f: Finding) -> str:
-            refs = [f"{rid} [{by_req[rid].doc_id or '—'}]" for rid in f.req_ids[:3] if rid in by_req]
+            refs = [
+                f"{rid} [{by_req[rid].doc_id or by_req[rid].locator or '—'}]"
+                for rid in f.req_ids[:3]
+                if rid in by_req
+            ]
             return ", ".join(refs) or "набор"
 
         block = "\n".join(

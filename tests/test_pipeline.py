@@ -137,3 +137,34 @@ def test_clean_text_strips_markdown():
     assert clean_text("| **REST type** | `GET` |") == "REST type | GET"
     assert clean_text("* **Ф-1.** Текст") == "Ф-1. Текст"
     assert clean_text("### Заголовок") == "Заголовок"
+
+
+def test_merged_finding_keeps_requirement_status_and_links_target():
+    from reqvalidator.models import Evidence, Finding, ReqCheckItem, Requirement
+
+    req = Requirement(id="ТР-01", evidence=Evidence(quote="q", line_start=1, line_end=1, verified=True))
+    merged = Finding(
+        id="О-01",
+        scope="requirement",
+        req_ids=["ТР-01"],
+        criterion="И8",
+        severity="major",
+        title="t",
+        description="d",
+        status="rejected",
+        merged_into="Д-05",
+    )
+    target = Finding(
+        id="Д-05",
+        scope="set",
+        req_ids=["ТР-01", "ТР-07"],
+        criterion="Н2",
+        severity="critical",
+        title="t",
+        description="d",
+    )
+    item = ReqCheckItem(req_id="ТР-01", checklist={"И8": "fail"}, rewrite="Новая формулировка")
+    (check,) = Pipeline._requirement_statuses([req], {"ТР-01": item}, [merged, target])
+    assert check.statuses["И8"] == "fail"
+    assert check.finding_ids == ["Д-05"]
+    assert check.rewrite == "Новая формулировка"

@@ -26,6 +26,7 @@ class Evidence(BaseModel):
 class Requirement(BaseModel):
     id: str
     doc_id: str | None = None
+    locator: str | None = None
     section: str = ""
     kind: str = "functional"
     summary: str = ""
@@ -63,6 +64,7 @@ class Finding(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
     status: Literal["confirmed", "unverified", "rejected"] = "confirmed"
     review_note: str | None = None
+    merged_into: str | None = None
     stage: str = ""
 
 
@@ -191,6 +193,7 @@ def _to_int(v: Any) -> int | None:
 
 class SegItem(_Lenient):
     doc_id: str | None = None
+    locator: str | None = None
     section: str | None = None
     kind: str = "functional"
     line_start: int | None = None

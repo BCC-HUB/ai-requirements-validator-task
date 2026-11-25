@@ -5,6 +5,7 @@ import pytest
 from pydantic import BaseModel
 
 from reqvalidator.llm import (
+    LLMAbortError,
     LLMFatalError,
     LLMResponse,
     LLMRetryableError,
@@ -209,15 +210,15 @@ def test_gemini_daily_quota_is_fatal():
         }
     }
     client, _ = _gemini([(429, err, None)])
-    with pytest.raises(LLMFatalError, match="дневная квота"):
+    with pytest.raises(LLMAbortError, match="дневная квота"):
         client.complete("s", "u")
 
 
 @pytest.mark.parametrize(
     ("status", "payload", "exc", "match"),
     [
-        (404, {"error": {"message": "models/x is not found"}}, LLMFatalError, "list-models"),
-        (400, {"error": {"message": "API key not valid"}}, LLMFatalError, "GEMINI_API_KEY"),
+        (404, {"error": {"message": "models/x is not found"}}, LLMAbortError, "list-models"),
+        (400, {"error": {"message": "API key not valid"}}, LLMAbortError, "GEMINI_API_KEY"),
         (
             503,
             {"error": {"message": "overloaded", "status": "UNAVAILABLE"}},
@@ -355,7 +356,19 @@ def test_claude_cli_success_and_errors(monkeypatch):
         raise FileNotFoundError(cmd[0])
 
     monkeypatch.setattr(subprocess, "run", missing)
-    with pytest.raises(LLMFatalError, match="не найден"):
+    with pytest.raises(LLMAbortError, match="не найден"):
+        client.complete("s", "p")
+
+    def subscription_limit(cmd, **kw):
+        payload = {
+            "is_error": True,
+            "result": "You've hit your 5-hour limit · resets 8pm",
+            "api_error_status": 429,
+        }
+        return subprocess.CompletedProcess(cmd, 1, json.dumps(payload), "")
+
+    monkeypatch.setattr(subprocess, "run", subscription_limit)
+    with pytest.raises(LLMAbortError, match="лимит Claude Code"):
         client.complete("s", "p")
 
 
@@ -385,7 +398,7 @@ def test_gemini_falls_back_to_next_model_when_overloaded():
 def test_unavailable_model_without_fallback_raises():
     gone = {"error": {"code": 404, "message": "no longer available to new users"}}
     client, _ = _gemini([(404, gone, None)])
-    with pytest.raises(LLMFatalError, match="недоступна"):
+    with pytest.raises(LLMAbortError, match="недоступна"):
         client.complete("s", "u")
 
 
@@ -407,7 +420,7 @@ def test_openai_list_error_body_insufficient_credits_and_404_fallback():
     client = OpenAICompatibleClient(
         fake_settings(provider="openrouter", model="a", fallback_models=("b",), effort="high"), http=http
     )
-    with pytest.raises(LLMFatalError, match="недостаточно средств"):
+    with pytest.raises(LLMAbortError, match="недостаточно средств"):
         client.complete("s", "u")
     assert http.requests[0][2]["json"]["reasoning"] == {"effort": "high"}
     assert client.complete("s", "u").model == "b"

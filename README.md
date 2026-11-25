@@ -118,7 +118,7 @@ python -m reqvalidator docs/requirements.md reports/report.md
 | Google Gemini | `gemini` | `GEMINI_API_KEY` | `GEMINI_MODEL` (`gemini-flash-latest`) | бесплатный тариф |
 | Anthropic Claude | `anthropic` | `ANTHROPIC_API_KEY` или `CLAUDE_API_KEY` | `ANTHROPIC_MODEL` (`claude-opus-5-5`) | `pip install anthropic` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` (`anthropic/claude-opus-5.5`) | один ключ к Claude, Gemini, DeepSeek, GPT |
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `DEEPSEEK_MODEL` (`deepseek-chat`) | |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `DEEPSEEK_MODEL` (`deepseek-v4-pro`) | или `deepseek-flash` |
 | OpenAI и совместимые (vLLM, LM Studio) | `openai` | `OPENAI_API_KEY` | `OPENAI_MODEL` (`gpt-4o-mini`) | адрес — `OPENAI_BASE_URL` |
 | Ollama (локально) | `ollama` | не нужен | `OLLAMA_MODEL` (`qwen2.5-coder:7b`) | контекст — `OLLAMA_NUM_CTX` |
 | Claude Code CLI | `claude-cli` | не нужен (вход в Claude Code) | `CLAUDE_CLI_MODEL` (модель Claude Code) | `claude -p` без инструментов |

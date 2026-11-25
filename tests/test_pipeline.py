@@ -1,6 +1,6 @@
 import pytest
 
-from reqvalidator.llm import LLMFatalError, LLMSession
+from reqvalidator.llm import LLMAbortError, LLMFatalError, LLMSession
 from reqvalidator.loaders import load_document
 from reqvalidator.pipeline import Pipeline, PipelineOptions, clean_text
 from reqvalidator.version import AgentVersion
@@ -168,3 +168,43 @@ def test_merged_finding_keeps_requirement_status_and_links_target():
     assert check.statuses["И8"] == "fail"
     assert check.finding_ids == ["Д-05"]
     assert check.rewrite == "Новая формулировка"
+
+
+class _FailingStage(FakeClient):
+    def __init__(self, stages, exc, **kw):
+        super().__init__(**kw)
+        self.fail_stages, self.exc = set(stages), exc
+
+    def complete(self, system, prompt, *, json_mode=True, stage=""):
+        if stage in self.fail_stages:
+            raise self.exc
+        return super().complete(system, prompt, json_mode=json_mode, stage=stage)
+
+
+def test_account_level_error_aborts_the_whole_run(fixtures):
+    client = _FailingStage({"check"}, LLMAbortError("на счёте провайдера недостаточно средств (HTTP 402)"))
+    with pytest.raises(LLMAbortError, match="недостаточно средств"):
+        _run(fixtures, client)
+
+
+def test_mostly_failed_checks_do_not_produce_a_false_all_clear(fixtures):
+    client = _FailingStage({"check"}, LLMFatalError("модель вернула мусор"))
+    with pytest.raises(LLMFatalError, match="отчёт не сформирован"):
+        _run(fixtures, client)
+
+
+def test_failed_set_stage_marks_run_incomplete_and_blocks_ready(fixtures):
+    res, _ = _run(fixtures, _FailingStage({"set-structure"}, LLMFatalError("сбой")))
+    assert any("structure" in x for x in res.verdict.incomplete)
+    from reqvalidator.report import render_markdown
+
+    assert "Проверка выполнена не полностью" in render_markdown(res)
+
+
+def test_incomplete_run_is_never_ready():
+    from reqvalidator.models import Stats
+
+    assert Pipeline.readiness(Stats(coverage_ratio=1.0), [], incomplete=True) == (
+        "conditional",
+        "conditional",
+    )

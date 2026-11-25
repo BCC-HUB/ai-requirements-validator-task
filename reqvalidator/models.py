@@ -101,6 +101,7 @@ class Verdict(BaseModel):
     development_rationale: str = ""
     testing_rationale: str = ""
     priorities: list[Priority] = Field(default_factory=list)
+    incomplete: list[str] = Field(default_factory=list)
 
 
 class CallInfo(BaseModel):

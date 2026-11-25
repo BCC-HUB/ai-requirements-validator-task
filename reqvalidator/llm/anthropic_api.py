@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from reqvalidator.llm.base import (
+    LLMAbortError,
     LLMClient,
     LLMFatalError,
     LLMResponse,
@@ -49,12 +50,16 @@ class AnthropicClient(LLMClient):
             with self._client.beta.messages.stream(**kwargs) as stream:
                 message = stream.get_final_message()
         except sdk.NotFoundError as exc:
-            raise LLMFatalError(f"модель {self.model!r} не найдена: {exc.message}") from exc
+            raise LLMAbortError(f"модель {self.model!r} не найдена: {exc.message}") from exc
         except sdk.AuthenticationError as exc:
-            raise LLMFatalError("Anthropic отклонил ключ. Проверьте ANTHROPIC_API_KEY.") from exc
+            raise LLMAbortError(
+                "Anthropic отклонил ключ. Проверьте ANTHROPIC_API_KEY (или CLAUDE_API_KEY)."
+            ) from exc
         except sdk.PermissionDeniedError as exc:
-            raise LLMFatalError(f"нет доступа к модели: {exc.message}") from exc
+            raise LLMAbortError(f"нет доступа к модели: {exc.message}") from exc
         except sdk.BadRequestError as exc:
+            if "credit balance" in str(exc.message).lower():
+                raise LLMAbortError(f"на счёте Anthropic недостаточно средств: {exc.message}") from exc
             raise LLMFatalError(f"запрос отклонён Anthropic API: {exc.message}") from exc
         except sdk.RateLimitError as exc:
             raise LLMRetryableError(f"лимит запросов Anthropic: {exc.message}") from exc

@@ -5,6 +5,7 @@ from __future__ import annotations
 import requests
 
 from reqvalidator.llm.base import (
+    LLMAbortError,
     LLMClient,
     LLMError,
     LLMFatalError,
@@ -81,7 +82,7 @@ class GeminiClient(LLMClient):
             raise LLMRetryableError(f"Gemini вернул ответ без текста (finishReason={finish})")
         return resp
 
-    def _error(self, r: requests.Response, model: str | None = None) -> LLMError:
+    def _error(self, r: requests.Response, model: str | None = None) -> LLMError | LLMAbortError:
         model = model or self.model
         err = error_payload(r)
         message = err.get("message") or r.text[:300]
@@ -116,7 +117,7 @@ class GeminiClient(LLMClient):
                 )
             )
         if r.status_code in (401, 403) or "API key" in message:
-            return LLMFatalError(
+            return LLMAbortError(
                 f"Gemini отклонил ключ ({r.status_code}): {message}. Проверьте GEMINI_API_KEY."
             )
         return LLMFatalError(f"ошибка Gemini {r.status_code}: {message}")

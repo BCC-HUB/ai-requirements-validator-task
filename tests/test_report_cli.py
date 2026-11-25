@@ -113,3 +113,18 @@ def test_locator_is_not_repeated_when_it_equals_section(result):
     md = render_markdown(result)
     assert "Часть A › Цели · Цели" not in md and "| Часть A › Цели |" in md
     assert "· Таблица: поле limit" in md
+
+
+def test_cli_abort_writes_no_report(monkeypatch, fixtures, tmp_path):
+    from reqvalidator.llm import LLMAbortError
+
+    class Broke(FakeClient):
+        def complete(self, system, prompt, *, json_mode=True, stage=""):
+            raise LLMAbortError("ключ отклонён (HTTP 401)")
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("REQVALIDATOR_CACHE_DIR", "")
+    monkeypatch.setattr(cli, "create_client", lambda settings: Broke(settings))
+    out = tmp_path / "r.md"
+    assert cli.main([str(fixtures / "sample_requirements.md"), str(out), "-q"]) == cli.EXIT_LLM
+    assert not out.exists()

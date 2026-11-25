@@ -37,6 +37,16 @@ class LLMError(RuntimeError):
     model_unavailable: bool = False
 
 
+class LLMAbortError(RuntimeError):
+    """Модель недоступна для всего прогона: нет средств на счёте, ключ отклонён, исчерпан лимит
+    подписки, сервер модели не запущен. Прогон останавливается целиком — продолжать без модели
+    значит выдать отчёт с ложным выводом «замечаний нет».
+
+    Намеренно не наследуется от ``LLMError``: этапы конвейера, которые переживают отдельные
+    сбои модели, такую ошибку не перехватывают.
+    """
+
+
 class LLMFatalError(LLMError):
     """Повтор не поможет: неверный ключ, нет модели, запрос отклонён."""
 
@@ -101,6 +111,8 @@ class LLMClient(ABC):
                             (m for m in self._after(model) if m not in self._retired and m not in tried), None
                         )
                         if nxt is None:
+                            if all(m in self._retired for m in self._models):
+                                raise LLMAbortError(f"ни одна из моделей недоступна: {exc}") from exc
                             raise
                         self.model = nxt
                         note = f"Модель {model} недоступна ({exc}); прогон продолжен на модели {nxt}"

@@ -114,7 +114,7 @@ def test_user_key_names_and_new_providers(monkeypatch):
     s = load_settings()
     assert (s.provider, s.base_url, s.effort) == ("openrouter", "https://openrouter.ai/api/v1", "high")
     s = load_settings(provider="deepseek")
-    assert (s.model, s.base_url, s.api_key) == ("deepseek-chat", "https://api.deepseek.com", "d")
+    assert (s.model, s.base_url, s.api_key) == ("deepseek-v4-pro", "https://api.deepseek.com", "d")
 
 
 def test_gemini_is_preferred_when_all_keys_present(monkeypatch):

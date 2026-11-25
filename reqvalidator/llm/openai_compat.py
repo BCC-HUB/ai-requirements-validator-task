@@ -5,6 +5,7 @@ from __future__ import annotations
 import requests
 
 from reqvalidator.llm.base import (
+    LLMAbortError,
     LLMClient,
     LLMError,
     LLMFatalError,
@@ -106,7 +107,7 @@ class OpenAICompatibleClient(LLMClient):
             return True
         return False
 
-    def _error(self, r: requests.Response, model: str | None = None) -> LLMError:
+    def _error(self, r: requests.Response, model: str | None = None) -> LLMError | LLMAbortError:
         message = error_payload(r).get("message") or r.text[:300]
         if r.status_code == 503:
             return unavailable(LLMRetryableError(f"модель {model} перегружена (HTTP 503): {message}"))
@@ -116,9 +117,9 @@ class OpenAICompatibleClient(LLMClient):
                 retry_after=parse_retry_after(r.headers.get("retry-after")),
             )
         if r.status_code == 402:
-            return LLMFatalError(f"на счёте провайдера недостаточно средств (HTTP 402): {message}")
+            return LLMAbortError(f"на счёте провайдера недостаточно средств (HTTP 402): {message}")
         if r.status_code in (401, 403):
-            return LLMFatalError(f"ключ отклонён (HTTP {r.status_code}): {message}")
+            return LLMAbortError(f"ключ отклонён (HTTP {r.status_code}): {message}")
         if r.status_code == 404:
             return unavailable(LLMFatalError(f"модель {model!r} или адрес не найдены (HTTP 404): {message}"))
         return LLMFatalError(f"HTTP {r.status_code}: {message}")
@@ -155,13 +156,13 @@ class OllamaClient(LLMClient):
         try:
             r = self.http.post(f"{self.base_url}/api/chat", json=body, timeout=self.settings.timeout)
         except requests.ConnectionError as exc:
-            raise LLMFatalError(
+            raise LLMAbortError(
                 f"Ollama недоступна по адресу {self.base_url}. Запустите `ollama serve` или проверьте OLLAMA_BASE_URL."
             ) from exc
         except requests.Timeout as exc:
             raise LLMRetryableError(f"таймаут Ollama ({self.settings.timeout:.0f} с)") from exc
         if r.status_code == 404:
-            raise LLMFatalError(
+            raise LLMAbortError(
                 f"модель {self.model!r} не найдена в Ollama. Выполните: ollama pull {self.model}"
             )
         if r.status_code >= 500:
@@ -184,5 +185,5 @@ class OllamaClient(LLMClient):
         try:
             r = self.http.get(f"{self.base_url}/api/tags", timeout=30)
         except requests.ConnectionError as exc:
-            raise LLMFatalError(f"Ollama недоступна по адресу {self.base_url}") from exc
+            raise LLMAbortError(f"Ollama недоступна по адресу {self.base_url}") from exc
         return sorted(m.get("name", "") for m in r.json().get("models", []))

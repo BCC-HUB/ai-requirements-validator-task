@@ -66,7 +66,7 @@ DEFAULTS: dict[str, ProviderDefaults] = {
         base_url="https://openrouter.ai/api/v1",
     ),
     "deepseek": ProviderDefaults(
-        model="deepseek-chat",
+        model="deepseek-v4-pro",
         max_output_tokens=8192,
         timeout=600,
         concurrency=4,

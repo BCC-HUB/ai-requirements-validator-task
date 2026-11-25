@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 
 from reqvalidator.llm.base import (
+    LLMAbortError,
     LLMClient,
     LLMFatalError,
     LLMResponse,
@@ -64,7 +65,7 @@ class ClaudeCLIClient(LLMClient):
                 check=False,
             )
         except FileNotFoundError as exc:
-            raise LLMFatalError(
+            raise LLMAbortError(
                 f"Claude Code CLI не найден ({self.cli}). Установите Claude Code или задайте CLAUDE_CLI_PATH."
             ) from exc
         except subprocess.TimeoutExpired as exc:
@@ -78,6 +79,8 @@ class ClaudeCLIClient(LLMClient):
         if proc.returncode != 0 or data.get("is_error") or not data:
             detail = (data.get("result") or proc.stderr or stdout or "").strip()[:500]
             low = detail.lower()
+            if "hit your" in low or "usage limit" in low or "credit balance" in low:
+                raise LLMAbortError(f"исчерпан лимит Claude Code: {detail}")
             if any(m in low for m in _RETRYABLE_MARKERS) or data.get("api_error_status") in (
                 429,
                 500,
@@ -86,7 +89,7 @@ class ClaudeCLIClient(LLMClient):
             ):
                 raise LLMRetryableError(f"Claude Code CLI: {detail}")
             if "login" in low or "auth" in low or "api key" in low:
-                raise LLMFatalError(
+                raise LLMAbortError(
                     f"Claude Code CLI не авторизован: {detail}. Выполните `claude` и войдите."
                 )
             raise LLMFatalError(f"Claude Code CLI завершился с ошибкой (код {proc.returncode}): {detail}")

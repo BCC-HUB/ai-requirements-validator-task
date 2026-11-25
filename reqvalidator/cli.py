@@ -11,7 +11,7 @@ from pathlib import Path
 
 from reqvalidator import __version__
 from reqvalidator.config import PROVIDERS, ConfigError, load_settings
-from reqvalidator.llm import LLMError, LLMSession, ResponseCache, create_client
+from reqvalidator.llm import LLMAbortError, LLMError, LLMSession, ResponseCache, create_client
 from reqvalidator.loaders import SUPPORTED_SUFFIXES, DocumentError, load_document
 from reqvalidator.pipeline import Pipeline, PipelineOptions
 from reqvalidator.report import READY_TEXT, write_report
@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             for name in client.list_models():
                 print(name)
-        except LLMError as exc:
+        except (LLMError, LLMAbortError) as exc:
             log.error("Не удалось получить список моделей: %s", exc)
             return EXIT_LLM
         return EXIT_OK
@@ -154,8 +154,11 @@ def main(argv: list[str] | None = None) -> int:
     t0 = time.monotonic()
     try:
         result = pipeline.run(doc, version)
+    except LLMAbortError as exc:
+        log.error("Прогон остановлен, отчёт не записан: %s", exc)
+        return EXIT_LLM
     except LLMError as exc:
-        log.error("Ошибка обращения к модели: %s", exc)
+        log.error("Ошибка обращения к модели, отчёт не записан: %s", exc)
         return EXIT_LLM
     except KeyboardInterrupt:
         log.error("Прервано пользователем")

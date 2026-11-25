@@ -22,7 +22,7 @@ from reqvalidator.criteria import (
 )
 from reqvalidator.document import Document, normalize
 from reqvalidator.lint import run_lint
-from reqvalidator.llm import LLMError, LLMSession, LLMTruncatedError
+from reqvalidator.llm import LLMError, LLMFatalError, LLMSession, LLMTruncatedError
 from reqvalidator.models import (
     AnalysisResult,
     CallInfo,
@@ -102,6 +102,7 @@ class Pipeline:
         t0 = time.monotonic()
         started_at = datetime.now().astimezone().isoformat(timespec="seconds")
         self.warnings = list(doc.warnings)
+        self.incomplete: list[str] = []
         numbered = doc.numbered_text()
         if len(numbered) > 250_000:
             self.warnings.append(
@@ -289,6 +290,7 @@ class Pipeline:
             items, excluded_raw = list(resp.requirements), list(resp.excluded)
         except LLMError as exc:
             self.warnings.append(f"Нарезка моделью не удалась ({exc}); применена эвристическая нарезка.")
+            self.incomplete.append("нарезка выполнена эвристикой без модели")
             log.warning("Нарезка моделью не удалась: %s — использую эвристику", exc)
             items, excluded_raw = _heuristic_segmentation(doc), []
 
@@ -438,6 +440,13 @@ class Pipeline:
         missing = [r.id for r in reqs if r.id not in merged]
         if missing:
             self.warnings.append("Не получен результат проверки для: " + ", ".join(missing))
+            self.incomplete.append(f"не проверено требований: {len(missing)} из {len(reqs)}")
+        if len(missing) * 2 > len(reqs):
+            # Отчёт по большинству непроверенных требований выглядел бы как «замечаний нет» — это ложный вывод.
+            raise LLMFatalError(
+                f"модель не вернула результаты проверки для {len(missing)} из {len(reqs)} требований; "
+                "отчёт не сформирован, чтобы не выдать ложный вывод. Подробности — в журнале выше."
+            )
         return merged, findings
 
     def _check_batch(
@@ -521,6 +530,7 @@ class Pipeline:
                 )
             except LLMError as exc:
                 self.warnings.append(f"Проверка набора ({stage}) не выполнена: {exc}")
+                self.incomplete.append(f"не выполнен проход проверки набора «{stage}»")
                 return stage, None
 
         assessments: dict[str, tuple[str, str]] = {}
@@ -784,8 +794,11 @@ class Pipeline:
 
     # ================================================================== 7. итог
     @staticmethod
-    def readiness(stats: Stats, findings: list[Finding]) -> tuple[str, str]:
-        """Правила готовности (детерминированные, не зависят от формулировок модели)."""
+    def readiness(stats: Stats, findings: list[Finding], incomplete: bool = False) -> tuple[str, str]:
+        """Правила готовности (детерминированные, не зависят от формулировок модели).
+
+        Если часть проверки не выполнена, вывод «можно начинать» не выдаётся.
+        """
         conf = [f for f in findings if f.status == "confirmed"]
         crit = [f for f in conf if f.severity == "critical"]
         major = [f for f in conf if f.severity == "major"]
@@ -800,6 +813,9 @@ class Pipeline:
             test = "conditional"
         else:
             test = "ready"
+        if incomplete:
+            dev = "conditional" if dev == "ready" else dev
+            test = "conditional" if test == "ready" else test
         return dev, test
 
     def _verdict(
@@ -810,7 +826,7 @@ class Pipeline:
         stats: Stats,
         coverage: list[CoverageRow],
     ) -> Verdict:
-        dev, test = self.readiness(stats, findings)
+        dev, test = self.readiness(stats, findings, incomplete=bool(self.incomplete))
         conf = [f for f in findings if f.status == "confirmed"]
         important = [f for f in conf if f.severity in ("critical", "major")]
         important.sort(key=lambda f: SEVERITY_ORDER[f.severity])
@@ -860,6 +876,7 @@ class Pipeline:
                 development_rationale=resp.development_rationale.strip(),
                 testing_rationale=resp.testing_rationale.strip(),
                 priorities=priorities,
+                incomplete=list(self.incomplete),
             )
         except LLMError as exc:
             self.warnings.append(f"Итоговое заключение сформировано без модели: {exc}")
@@ -867,6 +884,7 @@ class Pipeline:
                 development=dev,
                 testing=test,
                 summary=stats_text,
+                incomplete=list(self.incomplete),
                 priorities=[
                     Priority(title=f.title, action=f.recommendation, finding_ids=[f.id])
                     for f in important[:7]

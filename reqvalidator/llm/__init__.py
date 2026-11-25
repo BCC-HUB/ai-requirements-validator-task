@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from reqvalidator.config import OPENAI_COMPATIBLE, Settings
 from reqvalidator.llm.base import (
+    LLMAbortError,
     LLMClient,
     LLMError,
     LLMFatalError,
@@ -16,6 +17,7 @@ from reqvalidator.llm.session import CallRecord, LLMSession, ResponseCache
 
 __all__ = [
     "CallRecord",
+    "LLMAbortError",
     "LLMClient",
     "LLMError",
     "LLMFatalError",

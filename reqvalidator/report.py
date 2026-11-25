@@ -201,6 +201,7 @@ def render_markdown(res: AnalysisResult) -> str:
             f"> **Итог:** разработку — {dev_icon} {dev_text}; тестирование — {test_icon} {test_text}. "
             f"Выделено {plural(st.requirements, REQ_FORMS)}, подтверждено {plural(st.findings_total, FIND_FORMS)}, "
             f"из них критичных — {crit}. Подробности — в разделе 7."
+            + (" ⚠️ Проверка выполнена не полностью (см. раздел 7)." if v.incomplete else "")
         )
         w("")
     w(
@@ -548,6 +549,13 @@ def render_markdown(res: AnalysisResult) -> str:
             + (f" {v.testing_rationale}" if v.testing_rationale else "")
         )
         w("")
+        if v.incomplete:
+            w(
+                "⚠️ **Проверка выполнена не полностью:** "
+                + "; ".join(v.incomplete)
+                + ". Поэтому вывод «можно начинать» не выдаётся; повторите прогон."
+            )
+            w("")
         if v.summary:
             w(v.summary)
             w("")

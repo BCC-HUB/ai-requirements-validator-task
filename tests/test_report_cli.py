@@ -104,3 +104,12 @@ def test_cli_errors(monkeypatch, fixtures, tmp_path):
     monkeypatch.setattr(cli, "create_client", lambda settings: FakeClient(settings))
     assert cli.main([str(tmp_path / "missing.pdf"), str(tmp_path / "r.md")]) == cli.EXIT_DOCUMENT
     assert cli.main([]) == cli.EXIT_CONFIG
+
+
+def test_locator_is_not_repeated_when_it_equals_section(result):
+    r = result.requirements[0]
+    result.requirements[0] = r.model_copy(update={"section": "Часть A › Цели", "locator": "Цели"})
+    result.requirements[1] = result.requirements[1].model_copy(update={"locator": "Таблица: поле limit"})
+    md = render_markdown(result)
+    assert "Часть A › Цели · Цели" not in md and "| Часть A › Цели |" in md
+    assert "· Таблица: поле limit" in md

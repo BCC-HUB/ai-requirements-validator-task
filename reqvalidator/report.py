@@ -145,7 +145,10 @@ def render_markdown(res: AnalysisResult) -> str:
         return f"{link(rid)} ({r.doc_id})" if r and r.doc_id else link(rid)
 
     def place(r) -> str:
-        return r.section + (f" · {r.locator}" if r.locator else "")
+        last = r.section.split(" › ")[-1].strip().lower()
+        if r.locator and r.locator.strip().lower() not in (last, r.section.strip().lower()):
+            return f"{r.section} · {r.locator}"
+        return r.section
 
     def section(key: str, title: str) -> None:
         w(f'<a id="{key}"></a>')

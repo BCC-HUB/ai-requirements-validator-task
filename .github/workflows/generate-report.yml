@@ -1,49 +1,63 @@
 name: Generate report
 
-# Ручной запуск: агент проверяет docs/requirements.md и выкладывает отчёт артефактом.
-# Ключи берутся из секретов окружения (Settings → Environments), имя окружения —
-# в запросе, т.к. значение environment нельзя подставить из input, поэтому ниже
-# используется одно фиксированное имя; при необходимости замените его.
+# Ручной прогон агента в GitHub Actions: Actions → Generate report → Run workflow.
+# Ключи берутся из секретов окружения (Settings → Environments → <окружение> → Environment secrets):
+# GEMINI_API_KEY, CLAUDE_API_KEY, OPENROUTER_API_KEY, DEEPSEEK_API_KEY — достаточно одного.
+# Отчёт выкладывается артефактом «requirements-report».
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Имя окружения GitHub с секретами-ключами"
+        required: true
+        type: string
       provider:
         description: "Провайдер LLM"
         type: choice
-        default: anthropic
-        options: [anthropic, gemini, openai]
+        default: gemini
+        options: [gemini, anthropic, openrouter, deepseek]
       model:
-        description: "Модель (пусто — по умолчанию провайдера)"
+        description: "Модель (пусто — модель провайдера по умолчанию)"
         required: false
         default: ""
+      document:
+        description: "Проверяемый документ"
+        required: false
+        default: docs/requirements.md
 
 jobs:
   report:
     runs-on: ubuntu-latest
-    environment: ENVIRONMENT_NAME
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # нужен коммит для паспорта прогона
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: |
-          pip install -r requirements.txt anthropic
+      - name: Install
+        run: pip install -r requirements.txt anthropic
       - name: Run agent
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          OPENAI_BASE_URL: https://openrouter.ai/api/v1
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          INPUT_PROVIDER: ${{ inputs.provider }}
+          INPUT_MODEL: ${{ inputs.model }}
+          INPUT_DOCUMENT: ${{ inputs.document }}
           TZ: Asia/Almaty
           REQVALIDATOR_CACHE_DIR: ""
         run: |
-          ARGS="--provider ${{ inputs.provider }}"
-          if [ -n "${{ inputs.model }}" ]; then ARGS="$ARGS --model ${{ inputs.model }}"; fi
-          python -m reqvalidator docs/requirements.md reports/requirements-report.md $ARGS
+          args=(--provider "$INPUT_PROVIDER")
+          if [ -n "$INPUT_MODEL" ]; then args+=(--model "$INPUT_MODEL"); fi
+          python -m reqvalidator "$INPUT_DOCUMENT" reports/requirements-report.md "${args[@]}"
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: requirements-report
           path: reports/
+          if-no-files-found: warn

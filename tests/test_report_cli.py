@@ -36,7 +36,8 @@ def test_report_contains_all_required_sections(result):
     assert pos == sorted(pos), "разделы идут в порядке, заданном в ТЗ"
     assert "«Сервис бронирования переговорных»" in md
     assert "`fake-model`" in md and "коммит abc123def456" in md
-    assert "| ТР-01 | REQ-1 |" in md
+    assert "| [ТР-01](#tr-01) | REQ-1 |" in md
+    assert "<a id=\"tr-01\"></a>" in md and "(#d-01)" in md
     assert "«Сервис должен быть удобным и надёжным и т.д.»" in md
     assert "Непроверяемые формулировки" in md and "Противоречивые формулировки" in md
     for f in result.findings:

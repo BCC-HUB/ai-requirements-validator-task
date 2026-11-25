@@ -94,6 +94,34 @@ def sev_label(sev: str) -> str:
     return f"{SEV_ICON[sev]} {SEVERITIES[sev][0].lower()}"
 
 
+_TRANSLIT = str.maketrans({"Т": "t", "Р": "r", "Д": "d", "О": "o", "т": "t", "р": "r", "д": "d", "о": "o"})
+
+
+def anchor(identifier: str) -> str:
+    """Якорь для ID требования/замечания: «ТР-05» → «tr-05» (работает в GitHub и любом HTML)."""
+    return identifier.translate(_TRANSLIT).lower()
+
+
+def link(identifier: str) -> str:
+    return f"[{identifier}](#{anchor(identifier)})"
+
+
+def links(ids: list[str]) -> str:
+    return ", ".join(link(i) for i in ids)
+
+
+SECTIONS = (
+    ("passport", "1. Паспорт прогона"),
+    ("method", "2. Методика"),
+    ("segmentation", "3. Нарезка требований"),
+    ("individual", "4. Проверка каждого требования"),
+    ("set", "5. Проверка всего набора"),
+    ("summary", "6. Сводка"),
+    ("verdict", "7. Итог"),
+    ("appendix", "Приложения"),
+)
+
+
 def crit_label(code: str) -> str:
     c = BY_CODE.get(code)
     return f"{code} {c.name}" if c else code
@@ -112,7 +140,13 @@ def render_markdown(res: AnalysisResult) -> str:
 
     def ref(rid: str) -> str:
         r = req_by_id.get(rid)
-        return f"{rid} ({r.doc_id})" if r and r.doc_id else rid
+        return f"{link(rid)} ({r.doc_id})" if r and r.doc_id else link(rid)
+
+    def section(key: str, title: str) -> None:
+        w(f'<a id="{key}"></a>')
+        w("")
+        w(title)
+        w("")
 
     def evidence_lines(f: Finding) -> list[str]:
         rows = []
@@ -124,7 +158,10 @@ def render_markdown(res: AnalysisResult) -> str:
 
     def render_finding(f: Finding, heading_level: int = 0) -> None:
         reqs = ", ".join(ref(x) for x in f.req_ids) if f.req_ids else "набор в целом"
-        head = f"**{f.id}** · {sev_label(f.severity)} · {crit_label(f.criterion)} — **{f.title}**"
+        head = (
+            f'<a id="{anchor(f.id)}"></a>**{f.id}** · {sev_label(f.severity)} · {crit_label(f.criterion)} — '
+            f"**{f.title}**"
+        )
         w(head + "  ")
         if f.scope == "set":
             w(f"*Затронутые требования:* {reqs}  ")
@@ -164,15 +201,11 @@ def render_markdown(res: AnalysisResult) -> str:
         "а номера строк и страниц вычислены по файлу, а не взяты из ответа модели."
     )
     w("")
-    w(
-        "**Содержание:** 1. Паспорт прогона · 2. Методика · 3. Как агент нарезал требования · "
-        "4. Проверка каждого требования · 5. Проверка всего набора · 6. Сводка · 7. Итог · Приложения А–В"
-    )
+    w("**Содержание:** " + " · ".join(f"[{title}](#{key})" for key, title in SECTIONS))
     w("")
 
     # ------------------------------------------------------------ 1. паспорт
-    w("## 1. Паспорт прогона")
-    w("")
+    section("passport", "## 1. Паспорт прогона")
     w("| Параметр | Значение |")
     w("| :--- | :--- |")
     w(f"| Название документа | «{cell(run.document_title)}» |")
@@ -207,8 +240,7 @@ def render_markdown(res: AnalysisResult) -> str:
     w("")
 
     # ------------------------------------------------------------ 2. методика
-    w("## 2. Методика проверки")
-    w("")
+    section("method", "## 2. Методика проверки")
     w("Проверка статическая — ревью текста требований до разработки. Этапы прогона:")
     w("")
     w("1. **Чтение документа** и нумерация строк; для PDF — извлечение текста, таблиц и заголовков.")
@@ -256,8 +288,7 @@ def render_markdown(res: AnalysisResult) -> str:
     w("")
 
     # ------------------------------------------------------------ 3. нарезка
-    w("## 3. Как агент нарезал требования")
-    w("")
+    section("segmentation", "## 3. Как агент нарезал требования")
     no_id = st.requirements - st.with_doc_id
     w(
         f"Агент выделил {plural(st.requirements, REQ_FORMS)}. Собственный идентификатор в документе есть у "
@@ -268,7 +299,7 @@ def render_markdown(res: AnalysisResult) -> str:
     w("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
     for r in res.requirements:
         w(
-            f"| {r.id} | {cell(r.doc_id or '—')} | {cell(r.section)} | {cell(r.evidence.location)} | "
+            f"| {link(r.id)} | {cell(r.doc_id or '—')} | {cell(r.section)} | {cell(r.evidence.location)} | "
             f"{KIND_RU.get(r.kind, r.kind)} | {cell(r.summary)} | «{cell(r.evidence.quote)}» |"
         )
     w("")
@@ -282,8 +313,7 @@ def render_markdown(res: AnalysisResult) -> str:
         w("")
 
     # ------------------------------------------------------------ 4. каждое требование
-    w("## 4. Проверка каждого требования")
-    w("")
+    section("individual", "## 4. Проверка каждого требования")
     w("### 4.1. Матрица соответствия критериям")
     w("")
     w("| ID | ID в док. | " + " | ".join(c.code for c in INDIVIDUAL) + " | Замечания |")
@@ -299,7 +329,7 @@ def render_markdown(res: AnalysisResult) -> str:
             if own
             else "нет"
         )
-        w(f"| {r.id} | {cell(r.doc_id or '—')} | " + " | ".join(marks) + f" | {summary} |")
+        w(f"| {link(r.id)} | {cell(r.doc_id or '—')} | " + " | ".join(marks) + f" | {summary} |")
     w("")
     w("Критерии: " + "; ".join(f"{c.code} — {c.name}" for c in INDIVIDUAL) + ".")
     w("")
@@ -309,8 +339,7 @@ def render_markdown(res: AnalysisResult) -> str:
         chk = checks.get(r.id)
         own = [by_id[i] for i in (chk.finding_ids if chk else []) if i in by_id]
         title = f"{r.id}" + (f" · {r.doc_id}" if r.doc_id else "") + f" — {r.summary}"
-        w(f"#### {title}")
-        w("")
+        section(anchor(r.id), f"#### {title}")
         w(f"> «{r.evidence.quote}»  ")
         w(f"> *{r.evidence.location}; раздел: {r.section or '—'}; тип: {KIND_RU.get(r.kind, r.kind)}*")
         w("")
@@ -344,8 +373,7 @@ def render_markdown(res: AnalysisResult) -> str:
             w("")
 
     # ------------------------------------------------------------ 5. набор
-    w("## 5. Проверка всего набора требований")
-    w("")
+    section("set", "## 5. Проверка всего набора требований")
     if res.set_overview:
         w(res.set_overview)
         w("")
@@ -355,7 +383,7 @@ def render_markdown(res: AnalysisResult) -> str:
     w("| :--- | :--- | :--- | :---: | :--- | :--- |")
     for sc in res.set_checks:
         c = BY_CODE[sc.criterion]
-        ids = ", ".join(sc.finding_ids) or "—"
+        ids = links(sc.finding_ids) or "—"
         w(
             f"| {c.code} | {cell(c.name)} | {cell(c.source)} | {STATUS_ICON[sc.status]} {STATUS_TEXT[sc.status]} | "
             f"{ids} | {cell(sc.summary)} |"
@@ -410,8 +438,7 @@ def render_markdown(res: AnalysisResult) -> str:
         w("")
 
     # ------------------------------------------------------------ 6. сводка
-    w("## 6. Сводка")
-    w("")
+    section("summary", "## 6. Сводка")
     w(
         f"- Выделено требований: **{st.requirements}** (с идентификатором в документе — {st.with_doc_id}, "
         f"идентификатор присвоен агентом — {st.requirements - st.with_doc_id})."
@@ -461,12 +488,11 @@ def render_markdown(res: AnalysisResult) -> str:
         for f in items:
             reqs = ", ".join(ref(x) for x in f.req_ids) or "набор"
             places = "; ".join(e.location or "?" for e in f.evidence if e.verified) or "—"
-            w(f"| {f.id} | {cell(reqs)} | {cell(f.title)} | {cell(places)} |")
+            w(f"| {link(f.id)} | {cell(reqs)} | {cell(f.title)} | {cell(places)} |")
         w("")
 
     # ------------------------------------------------------------ 7. итог
-    w("## 7. Итог")
-    w("")
+    section("verdict", "## 7. Итог")
     if v:
         dev_icon, dev_text = READY_TEXT[v.development]
         test_icon, test_text = READY_TEXT[v.testing]
@@ -486,7 +512,7 @@ def render_markdown(res: AnalysisResult) -> str:
         w("### Что исправить в первую очередь")
         w("")
         for i, p in enumerate(v.priorities, 1):
-            ids = f" ({', '.join(p.finding_ids)})" if p.finding_ids else ""
+            ids = f" ({links(p.finding_ids)})" if p.finding_ids else ""
             action = f" — {p.action}" if p.action else ""
             w(f"{i}. **{p.title}**{action}{ids}")
         w("")
@@ -499,8 +525,7 @@ def render_markdown(res: AnalysisResult) -> str:
         w("")
 
     # ------------------------------------------------------------ приложения
-    w("## Приложение А. Сигналы статического анализатора")
-    w("")
+    section("appendix", "## Приложение А. Сигналы статического анализатора")
     if res.lint:
         w(
             "Сигналы получены без модели и переданы ей как подсказки; подтверждённые дефекты отражены в разделах 4–5."
@@ -524,7 +549,10 @@ def render_markdown(res: AnalysisResult) -> str:
         w("| :--- | :--- | :--- | :--- | :--- |")
         for f in dropped:
             reqs = ", ".join(ref(x) for x in f.req_ids) or "набор"
-            w(f"| {f.id} | {cell(reqs)} | {f.criterion} | {cell(f.title)} | {cell(f.review_note or '')} |")
+            w(
+                f'| <a id="{anchor(f.id)}"></a>{f.id} | {cell(reqs)} | {f.criterion} | {cell(f.title)} | '
+                f"{cell(f.review_note or '')} |"
+            )
     else:
         w("Все замечания модели прошли самопроверку.")
     w("")

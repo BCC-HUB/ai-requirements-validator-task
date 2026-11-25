@@ -25,8 +25,20 @@ share/python-wheels/
 .installed.cfg
 *.egg
 
-# Virtual environments
+# Secrets / local config
 .env
+.env.*
+!.env.example
+
+# Agent caches and tool artefacts
+.reqvalidator_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+
+# Virtual environments
 .venv
 env/
 venv/

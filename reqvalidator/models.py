@@ -238,7 +238,7 @@ class LLMEvidence(_Lenient):
 
 
 class LLMFinding(_Lenient):
-    criterion: str
+    criterion: str | None = None
     severity: Severity = "major"
     title: str
     description: str = ""
@@ -257,11 +257,9 @@ class LLMFinding(_Lenient):
 
     @field_validator("criterion", mode="before")
     @classmethod
-    def _crit(cls, v: Any) -> str:
-        code = normalize_criterion(str(v or ""))
-        if code is None:
-            raise ValueError(f"неизвестный критерий {v!r}; используй коды И1–И9 или Н1–Н8")
-        return code
+    def _crit(cls, v: Any) -> str | None:
+        # Неизвестный код не роняет весь ответ: такое замечание будет отброшено с предупреждением.
+        return normalize_criterion(str(v or ""))
 
 
 class ReqCheckItem(_Lenient):
@@ -301,7 +299,7 @@ class SetAssessmentLLM(_Lenient):
 
 
 class SetFindingLLM(_Lenient):
-    criterion: str
+    criterion: str | None = None
     severity: Severity = "major"
     title: str
     description: str = ""
@@ -313,11 +311,8 @@ class SetFindingLLM(_Lenient):
 
     @field_validator("criterion", mode="before")
     @classmethod
-    def _crit(cls, v: Any) -> str:
-        code = normalize_criterion(str(v or ""))
-        if code is None:
-            raise ValueError(f"неизвестный критерий {v!r}; используй коды И1–И9 или Н1–Н8")
-        return code
+    def _crit(cls, v: Any) -> str | None:
+        return normalize_criterion(str(v or ""))
 
 
 class CoverageLLM(_Lenient):

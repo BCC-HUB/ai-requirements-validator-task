@@ -197,6 +197,8 @@ class LLMSession:
                 result = schema.model_validate(data)
             except (JSONExtractionError, ValidationError) as exc:
                 last_error = _short_error(exc)
+                if repair >= self.repair_attempts:
+                    break
                 log.warning(
                     "Ответ модели на этапе «%s» не прошёл проверку (%s), попытка исправления %d/%d",
                     stage,

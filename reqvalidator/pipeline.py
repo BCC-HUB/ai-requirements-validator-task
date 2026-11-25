@@ -179,7 +179,7 @@ class Pipeline:
                 )
                 for r in self.session.records
             ],
-            warnings=self.warnings,
+            warnings=list(dict.fromkeys(self.warnings)),
         )
         return AnalysisResult(
             run=run,
@@ -407,6 +407,11 @@ class Pipeline:
             req = by_id[rid]
             rng = (req.evidence.line_start or 1, req.evidence.line_end or req.evidence.line_start or 1)
             for f in item.findings:
+                if f.criterion is None:
+                    self.warnings.append(
+                        f"Отброшено замечание к {rid} с неизвестным критерием: «{f.title[:60]}»"
+                    )
+                    continue
                 criterion = _SET_TO_IND.get(f.criterion, f.criterion)
                 primary = self._ground(doc, f.quote, near=f.line or rng[0], fallback=rng)
                 related = [self._ground(doc, e.quote, near=e.line) for e in f.related]
@@ -467,6 +472,12 @@ class Pipeline:
             out.update(self._check_batch(doc, numbered, batch[mid:], catalog, lint, all_reqs))
             return out
         except LLMError as exc:
+            if len(batch) > 1:
+                log.warning("Пакет %s не обработан (%s) — проверяю требования по одному", label, exc)
+                out = {}
+                for r in batch:
+                    out.update(self._check_batch(doc, numbered, [r], catalog, lint, all_reqs))
+                return out
             self.warnings.append(f"Проверка {label} не выполнена: {exc}")
             return {}
         norm = self._rid_normalizer(all_reqs)
@@ -522,6 +533,11 @@ class Pipeline:
                 code = _IND_TO_SET.get(a.criterion, a.criterion)
                 assessments.setdefault(code, (a.status.strip().lower(), a.summary.strip()))
             for f in resp.findings:
+                if f.criterion is None:
+                    self.warnings.append(
+                        f"Отброшено замечание к набору с неизвестным критерием: «{f.title[:60]}»"
+                    )
+                    continue
                 code = _IND_TO_SET.get(f.criterion, f.criterion)
                 evidence = [self._ground(doc, e.quote, near=e.line) for e in f.evidence]
                 verified = [e for e in evidence if e.verified]

@@ -106,7 +106,7 @@ def _load_markdown(path: Path):
     lines: list[Line] = []
     title = None
     in_code = False
-    for raw in text.split("\n"):
+    for raw in text.splitlines():
         stripped = raw.strip()
         if stripped.startswith("```") or stripped.startswith("~~~"):
             in_code = not in_code
@@ -126,7 +126,7 @@ def _load_markdown(path: Path):
 def _load_text(path: Path):
     text = _read_text(path).replace("\r\n", "\n").replace("\r", "\n")
     lines: list[Line] = []
-    for raw in text.split("\n"):
+    for raw in text.splitlines():
         stripped = raw.strip()
         level = 0
         m = _NUM_HEADING.match(stripped)
@@ -296,10 +296,9 @@ def _pdf_page_items(page, pno: int) -> list[dict]:
         clean_rows = []
         for row in rows:
             cells = [_WRAP_HYPHEN.sub(r"\1-\2", " ".join((c or "").split())) for c in row]
-            if not any(cells):
-                continue
+            # Пустые строки таблицы сохраняем: незаполненный блок (например, согласования) — тоже сигнал.
             clean_rows.append("| " + " | ".join(cells) + " |")
-        if not clean_rows:
+        if not any(row.strip("| ") for row in clean_rows):
             continue
         # Таблица из одной ячейки — чаще всего рамка блока кода, а не таблица.
         if len(clean_rows) == 1 and len(rows[0]) == 1:
@@ -430,6 +429,7 @@ def _drop_running_headers(items: list[dict], n_pages: int) -> list[dict]:
     def key(it: dict) -> str:
         return re.sub(r"\d+", "#", it["text"].strip().lower())
 
+    body = _body_font_size(items)
     edge = [it for it in items if it["kind"] == "text" and (it["rel"] < 0.07 or it["rel"] > 0.93)]
     pages_by_key: dict[str, set[int]] = {}
     for it in edge:
@@ -439,7 +439,9 @@ def _drop_running_headers(items: list[dict], n_pages: int) -> list[dict]:
     out = []
     for it in items:
         at_edge = it["kind"] == "text" and (it["rel"] < 0.07 or it["rel"] > 0.93)
-        if at_edge and (key(it) in repeated or _PAGE_NO.match(it["text"].strip())):
+        # Колонтитул: повторяется на страницах, номер страницы или мелкий шрифт у самого края листа.
+        small = it.get("size", body) <= body * 0.85
+        if at_edge and (key(it) in repeated or _PAGE_NO.match(it["text"].strip()) or small):
             continue
         out.append(it)
     return out
@@ -515,7 +517,7 @@ class _HTMLToLines(HTMLParser):
             self.cell_buf = None
             return
         if tag == "tr" and self.cells is not None:
-            if any(self.cells):
+            if self.cells:
                 self.lines.append(Line(no=0, text="| " + " | ".join(self.cells) + " |"))
             self.cells = None
             return

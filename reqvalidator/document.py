@@ -131,6 +131,9 @@ class Document:
 
     @cached_property
     def _single_top(self) -> bool:
+        """Единственный заголовок верхнего уровня в размеченном документе — это название документа."""
+        if self.format == "text":
+            return False
         return sum(1 for ln in self.lines if ln.is_heading and ln.heading_level == self._top_level) == 1
 
     def section_of(self, line_no: int) -> str:

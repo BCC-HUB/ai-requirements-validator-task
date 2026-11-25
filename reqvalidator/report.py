@@ -512,8 +512,13 @@ def render_markdown(res: AnalysisResult) -> str:
         w("| ID | Серьёзность | Требования | Суть | Место |")
         w("| :--- | :--- | :--- | :--- | :--- |")
         for f in items:
-            reqs = ", ".join(ref(x) for x in f.req_ids) or "набор"
-            places = "; ".join(dict.fromkeys(e.location or "?" for e in f.evidence if e.verified)) or "—"
+            shown = f.req_ids[:4]
+            reqs = ", ".join(ref(x) for x in shown) or "набор"
+            if len(f.req_ids) > len(shown):
+                reqs += f" и ещё {len(f.req_ids) - len(shown)}"
+            places = (
+                "; ".join(list(dict.fromkeys(e.location or "?" for e in f.evidence if e.verified))[:4]) or "—"
+            )
             w(f"| {link(f.id)} | {SEV_ICON[f.severity]} | {cell(reqs)} | {cell(f.title)} | {cell(places)} |")
         w("")
 

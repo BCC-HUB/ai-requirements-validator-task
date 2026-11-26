@@ -298,8 +298,15 @@ class Pipeline:
         excluded = self._excluded(doc, excluded_raw)
 
         uncovered = _uncovered_lines(doc, reqs, excluded)
-        if uncovered and len(uncovered) <= 120 and items:
-            log.info("      строк вне нарезки: %d — уточняю у модели", len(uncovered))
+        # Слабые модели исключают настоящие требования («это метаданные»); такие строки пересматриваются.
+        reconsider = _suspicious_exclusions(doc, excluded)
+        todo = len(uncovered) + len(reconsider)
+        if todo and todo <= 150 and items:
+            log.info(
+                "      строк вне нарезки: %d, исключённых строк на пересмотр: %d — уточняю у модели",
+                len(uncovered),
+                len(reconsider),
+            )
             try:
                 extra = self.session.ask_json(
                     "segment-coverage",
@@ -308,14 +315,16 @@ class Pipeline:
                         numbered,
                         [(n, doc.line(n).text) for n in uncovered],
                         "\n".join(f"{r.id} {r.evidence.location}: {r.summary}" for r in reqs),
+                        [(n, doc.line(n).text) for n in reconsider],
                     ),
                     SegResponse,
-                    label=f"{len(uncovered)} строк",
+                    label=f"{todo} строк",
                 )
                 reqs = self._materialize(doc, items + list(extra.requirements))
                 excluded = self._excluded(doc, excluded_raw + list(extra.excluded))
             except LLMError as exc:
                 self.warnings.append(f"Уточнение нарезки не выполнено: {exc}")
+        excluded = _trim_excluded(doc, excluded, reqs)
         # Всё, что так и не попало в нарезку, явно фиксируем в отчёте.
         for start, end in _ranges(_uncovered_lines(doc, reqs, excluded)):
             excluded.append(
@@ -333,6 +342,7 @@ class Pipeline:
         return reqs, excluded
 
     def _materialize(self, doc: Document, items: list[SegItem]) -> list[Requirement]:
+        doc_norm = normalize(doc.text)
         rows: list[tuple[int, int, SegItem, Evidence]] = []
         seen: set[tuple[int, int, str]] = set()
         for it in items:
@@ -348,7 +358,12 @@ class Pipeline:
             if key in seen:
                 continue
             seen.add(key)
+            if it.doc_id and not _literal_doc_id(it.doc_id, ev.quote, doc_norm):
+                # Модель придумала идентификатор, которого нет в документе: в отчёт его не переносим.
+                self.warnings.append(f"Идентификатор «{it.doc_id}» не найден в документе и не использован")
+                it = it.model_copy(update={"doc_id": None})
             rows.append((ev.line_start, ev.line_end or ev.line_start, it, ev))
+        rows = _drop_contained(rows)
         rows.sort(key=lambda r: (r[0], r[1]))
         width = 3 if len(rows) > 99 else 2
         reqs = []
@@ -370,6 +385,7 @@ class Pipeline:
     @staticmethod
     def _excluded(doc: Document, raw) -> list[Excluded]:
         out = []
+        seen: set[tuple[int, int]] = set()
         for e in raw:
             if not e.line_start:
                 continue
@@ -377,6 +393,9 @@ class Pipeline:
             end = doc.clamp(e.line_end or e.line_start)
             if end < start:
                 start, end = end, start
+            if (start, end) in seen:
+                continue
+            seen.add((start, end))
             out.append(
                 Excluded(
                     line_start=start,
@@ -893,6 +912,111 @@ class Pipeline:
 
 
 # ====================================================================== вспомогательное
+_ID_TAIL = re.compile(r"([A-Za-zА-Яа-яЁё]{0,8}-?\d+(?:\.\d+)*)\s*\.?\s*$")
+
+
+def _literal_doc_id(doc_id: str, quote: str, doc_norm: str) -> bool:
+    """Идентификатор считается настоящим, если он есть в тексте документа или им начинается цитата.
+
+    Второй случай — составные подписи вида «Логика работы метода, п. 4» или «Статус 401»,
+    где в документе написано «4. …» или «401. …».
+    """
+    nid = normalize(doc_id).strip(" .")
+    if nid and nid in doc_norm:
+        return True
+    m = _ID_TAIL.search(doc_id.strip())
+    if not m:
+        return False
+    tail = normalize(m.group(1))
+    return bool(tail) and re.match(rf"^{re.escape(tail)}(?![\w-])", normalize(quote)) is not None
+
+
+_REQ_WORDS = re.compile(
+    r"(?<![\w-])(?:должн\w*|обязан\w*|необходимо|не допускается|запрещ\w*|shall|must)(?![\w-])", re.IGNORECASE
+)
+_REQ_SECTIONS = (
+    "функциональн",
+    "критери",
+    "api",
+    "логик",
+    "правил",
+    "параметр",
+    "статус",
+    "интеграц",
+    "данн",
+    "ответ",
+)
+
+
+def _suspicious_exclusions(doc: Document, excluded: list[Excluded]) -> list[int]:
+    """Исключённые моделью строки, похожие на требования: слова обязательности или раздел требований."""
+    content = set(_content_lines(doc))
+    out: set[int] = set()
+    for e in excluded:
+        for n in range(e.line_start, e.line_end + 1):
+            if n not in content:
+                continue
+            if n < doc.line_count and _TABLE_SEP.match(doc.line(n + 1).text.strip()):
+                continue  # строка заголовка таблицы
+            section = doc.section_of(n).split(" › ")[-1].lower()  # ближайший заголовок, не вся ветка
+            if _REQ_WORDS.search(doc.line(n).text) or any(k in section for k in _REQ_SECTIONS):
+                out.add(n)
+    return sorted(out)
+
+
+def _trim_excluded(doc: Document, excluded: list[Excluded], reqs: list[Requirement]) -> list[Excluded]:
+    """Убрать из исключений строки, вошедшие в требования; остаток диапазона сохраняет причину."""
+    covered: set[int] = set()
+    for r in reqs:
+        a, b = r.evidence.line_start or 0, r.evidence.line_end or r.evidence.line_start or 0
+        covered.update(range(a, b + 1))
+    content = set(_content_lines(doc))
+    out: list[Excluded] = []
+    seen: set[tuple[int, int]] = set()
+    for e in excluded:
+        lines = [n for n in range(e.line_start, e.line_end + 1) if n not in covered]
+        if len(lines) == e.line_end - e.line_start + 1:
+            if (e.line_start, e.line_end) not in seen:
+                seen.add((e.line_start, e.line_end))
+                out.append(e)
+            continue
+        for start, end in _ranges([n for n in lines if n in content]):
+            if (start, end) in seen:
+                continue
+            seen.add((start, end))
+            out.append(
+                e.model_copy(
+                    update={
+                        "line_start": start,
+                        "line_end": end,
+                        "location": doc.location_label(start, end),
+                        "section": doc.section_of(start),
+                    }
+                )
+            )
+    return out
+
+
+def _drop_contained(rows: list) -> list:
+    """Убрать дубли нарезки: если цитата одного требования целиком входит в цитату другого на тех же строках,
+    остаётся пункт с идентификатором документа, а без него — более точный (вложенный) фрагмент."""
+    drop: set[int] = set()
+    norms = [normalize(r[3].quote) for r in rows]
+    for i, (a_start, a_end, a_item, _) in enumerate(rows):
+        for j, (b_start, b_end, _b_item, _) in enumerate(rows):
+            if i == j or i in drop or j in drop:
+                continue
+            if b_end < a_start or a_end < b_start or norms[j] not in norms[i]:
+                continue
+            if norms[i] == norms[j]:
+                drop.add(max(i, j))
+            elif a_item.doc_id:
+                drop.add(j)  # пункт с идентификатором поглощает свой фрагмент
+            else:
+                drop.add(i)  # без идентификатора оставляем более точный фрагмент
+    return [r for k, r in enumerate(rows) if k not in drop]
+
+
 def _content_lines(doc: Document) -> list[int]:
     out = []
     in_code = False

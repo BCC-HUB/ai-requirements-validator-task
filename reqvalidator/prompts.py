@@ -96,11 +96,24 @@ def segment_prompt(numbered: str) -> str:
 {_doc_block(numbered)}"""
 
 
-def coverage_repair_prompt(numbered: str, uncovered: list[tuple[int, str]], known: str) -> str:
-    lines = "\n".join(f"L{no}| {text}" for no, text in uncovered)
+def coverage_repair_prompt(
+    numbered: str,
+    uncovered: list[tuple[int, str]],
+    known: str,
+    reconsider: list[tuple[int, str]] | None = None,
+) -> str:
+    lines = "\n".join(f"L{no}| {text}" for no, text in uncovered) or "нет"
+    second = ""
+    if reconsider:
+        rows = "\n".join(f"L{no}| {text}" for no, text in reconsider)
+        second = f"""
+
+Следующие строки ты отнёс к исключённым, но они похожи на требования (содержат слова обязательности или находятся в разделе требований, критериев приёмки, API, данных). Пересмотри их по правилам нарезки: требование — в requirements, иначе — в excluded с конкретной причиной:
+
+{rows}"""
     return f"""ЗАДАЧА: дополнить нарезку требований. Следующие строки документа не вошли ни в одно выделенное требование и не отмечены как исключённые:
 
-{lines}
+{lines}{second}
 
 Уже выделенные требования (ID — строки — суть):
 {known}

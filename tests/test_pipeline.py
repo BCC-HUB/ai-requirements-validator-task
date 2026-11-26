@@ -208,3 +208,86 @@ def test_incomplete_run_is_never_ready():
         "conditional",
         "conditional",
     )
+
+
+def test_segmentation_guards_against_weak_model_output(fixtures):
+    """Придуманные ID, вложенные дубли и повторы исключений (так отвечала локальная модель 3B)."""
+    from reqvalidator.models import SegExcluded, SegItem
+    from reqvalidator.pipeline import _literal_doc_id
+
+    doc = load_document(fixtures / "sample_requirements.md")
+    pipe = Pipeline(LLMSession(FakeClient(), sleep=lambda s: None), FakeClient().settings)
+    pipe.warnings = []
+    items = [
+        SegItem(
+            doc_id="REQ-1",
+            line_start=7,
+            quote="REQ-1. Сотрудник бронирует переговорную на интервал от 15 "
+            "минут до 4 часов. Бронирование подтверждается быстро.",
+        ),
+        SegItem(doc_id=None, line_start=7, quote="Бронирование подтверждается быстро."),  # фрагмент REQ-1
+        SegItem(
+            doc_id="REQ-4",
+            line_start=24,
+            line_end=26,  # такого ID в документе нет
+            quote="Исходные условия | Действие | Ожидаемый результат | Свободная переговорная | "
+            "Забронировать на 30 минут | Бронь создана",
+        ),
+        SegItem(
+            doc_id=None,
+            line_start=26,
+            quote="Свободная переговорная | Забронировать на 30 минут | Бронь создана",
+        ),
+    ]
+    reqs = pipe._materialize(doc, items)
+    assert [(r.doc_id, r.evidence.line_start) for r in reqs] == [("REQ-1", 7), (None, 26)]
+    assert any("REQ-4" in w for w in pipe.warnings)
+    excluded = pipe._excluded(doc, [SegExcluded(line_start=34, line_end=36, reason="x")] * 5)
+    assert len(excluded) == 1
+
+    assert _literal_doc_id("Ф-1", "Ф-1. Текст", "ф-1. текст")
+    assert _literal_doc_id("Логика работы метода, п. 4", "4. Заменить настройку", "...")
+    assert _literal_doc_id("Статус 401", "**401.** Ответ в случае", "...")
+    assert not _literal_doc_id("Статус 401", "4010 строк", "...")
+    assert not _literal_doc_id("REQ-4", "Критерии приемки", "req-1 req-2")
+
+
+def test_over_excluded_requirements_are_reconsidered(fixtures):
+    """Модель 7B объявила НФТ и критерии приёмки «метаданными» — агент отправляет их на пересмотр."""
+
+    class OverExcluding(FakeClient):
+        def _segment(self, prompt, stage):
+            data = super()._segment(prompt, stage)
+            data["requirements"] = data["requirements"][:2]  # только REQ-1 и REQ-2
+            data["excluded"] = [{"line_start": 10, "line_end": 36, "reason": "Метаданные задачи"}]
+            return data
+
+        def _coverage(self, prompt, stage):
+            assert "похожи на требования" in prompt
+            assert "L12|" in prompt and "L26|" in prompt
+            return {
+                "requirements": [
+                    {
+                        "doc_id": None,
+                        "kind": "nonfunctional",
+                        "line_start": 12,
+                        "quote": "Сервис должен быть удобным и надёжным и т.д.",
+                        "summary": "НФТ",
+                    },
+                    {
+                        "doc_id": None,
+                        "kind": "acceptance",
+                        "line_start": 26,
+                        "quote": "Свободная переговорная | Забронировать на 30 минут | Бронь создана",
+                        "summary": "КП",
+                    },
+                ],
+                "excluded": [],
+            }
+
+    res, _ = _run(fixtures, OverExcluding())
+    lines = {r.evidence.line_start for r in res.requirements}
+    assert {7, 8, 12, 26} <= lines
+    for e in res.excluded:  # исключения больше не перекрывают требования, причина сохранена
+        assert not any(e.line_start <= n <= e.line_end for n in lines)
+    assert any(e.reason == "Метаданные задачи" for e in res.excluded)

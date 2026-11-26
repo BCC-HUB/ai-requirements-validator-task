@@ -994,7 +994,18 @@ def _trim_excluded(doc: Document, excluded: list[Excluded], reqs: list[Requireme
                     }
                 )
             )
-    return out
+    # Диапазон, целиком лежащий внутри другого исключения, ничего не добавляет к отчёту.
+    return [
+        e
+        for i, e in enumerate(out)
+        if not any(
+            j != i
+            and o.line_start <= e.line_start
+            and e.line_end <= o.line_end
+            and (o.line_start, o.line_end) != (e.line_start, e.line_end)
+            for j, o in enumerate(out)
+        )
+    ]
 
 
 def _drop_contained(rows: list) -> list:

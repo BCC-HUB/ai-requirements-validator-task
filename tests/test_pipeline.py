@@ -291,3 +291,17 @@ def test_over_excluded_requirements_are_reconsidered(fixtures):
     for e in res.excluded:  # исключения больше не перекрывают требования, причина сохранена
         assert not any(e.line_start <= n <= e.line_end for n in lines)
     assert any(e.reason == "Метаданные задачи" for e in res.excluded)
+
+
+def test_nested_exclusions_are_collapsed(fixtures):
+    from reqvalidator.models import SegExcluded
+    from reqvalidator.pipeline import _trim_excluded
+
+    doc = load_document(fixtures / "sample_requirements.md")
+    pipe = Pipeline(LLMSession(FakeClient(), sleep=lambda s: None), FakeClient().settings)
+    raw = [
+        SegExcluded(line_start=15, line_end=21, reason="API"),
+        SegExcluded(line_start=18, line_end=19, reason="x"),
+    ]
+    out = _trim_excluded(doc, pipe._excluded(doc, raw), [])
+    assert [(e.line_start, e.line_end, e.reason) for e in out] == [(15, 21, "API")]

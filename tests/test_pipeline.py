@@ -306,3 +306,19 @@ def test_nested_exclusions_are_collapsed(fixtures):
     ]
     out = _trim_excluded(doc, pipe._excluded(doc, raw), [])
     assert [(e.line_start, e.line_end, e.reason) for e in out] == [(15, 21, "API")]
+
+
+def test_status_label_above_code_block_counts_as_document_id(tmp_path):
+    from reqvalidator.models import SegItem
+
+    path = tmp_path / "api.md"
+    path.write_text(
+        '# API\n\n## Статусы\n\n**404**\n```json\n{"message":"Карта не найдена"}\n```\n', encoding="utf-8"
+    )
+    doc = load_document(path)
+    pipe = Pipeline(LLMSession(FakeClient(), sleep=lambda s: None), FakeClient().settings)
+    pipe.warnings = []
+    (req,) = pipe._materialize(
+        doc, [SegItem(doc_id="Статус 404", line_start=7, quote='{"message":"Карта не найдена"}')]
+    )
+    assert req.doc_id == "Статус 404" and not pipe.warnings

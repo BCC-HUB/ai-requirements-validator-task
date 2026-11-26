@@ -358,7 +358,8 @@ class Pipeline:
             if key in seen:
                 continue
             seen.add(key)
-            span = doc.text_of(max(1, ev.line_start - 1), ev.line_end or ev.line_start)
+            # Подпись пункта может стоять на 1–3 строки выше (например, «**404**» над блоком ```json).
+            span = doc.text_of(max(1, ev.line_start - 3), ev.line_end or ev.line_start)
             if it.doc_id and not _literal_doc_id(it.doc_id, ev.quote, doc_norm, span):
                 # Модель придумала идентификатор, которого нет в документе: в отчёт его не переносим.
                 self.warnings.append(f"Идентификатор «{it.doc_id}» не найден в документе и не использован")

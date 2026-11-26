@@ -35,7 +35,7 @@ class AgentVersion:
         return label
 
 
-def _git(*args: str) -> str | None:
+def _git(*args: str, strip: bool = True) -> str | None:
     try:
         out = subprocess.run(
             ["git", *args],
@@ -47,7 +47,8 @@ def _git(*args: str) -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return out.stdout.strip()
+    # Для `git status --porcelain` ведущий пробел значим (« M путь»), поэтому его не срезаем.
+    return out.stdout.strip() if strip else out.stdout.rstrip("\n")
 
 
 def agent_version(ignore_paths: list[Path] | tuple[Path, ...] = ()) -> AgentVersion:
@@ -63,20 +64,22 @@ def agent_version(ignore_paths: list[Path] | tuple[Path, ...] = ()) -> AgentVers
         return AgentVersion(__version__, commit=env_commit or None)
 
     tag = _git("describe", "--tags", "--exact-match", "HEAD") or None
-    status = _git("status", "--porcelain", "--untracked-files=no") or ""
+    status = _git("status", "--porcelain", "--untracked-files=no", strip=False) or ""
+    return AgentVersion(__version__, commit=commit, tag=tag, dirty=_is_dirty(status, ignore_paths))
+
+
+def _is_dirty(status: str, ignore_paths: list[Path] | tuple[Path, ...] = ()) -> bool:
+    """Есть ли изменения кода агента: строки `git status --porcelain`, кроме отчётов в reports/."""
     ignored = set()
     for p in ignore_paths:
         try:
             ignored.add(Path(p).resolve().relative_to(_REPO_DIR).as_posix())
         except ValueError:
             continue
-    dirty = False
     for line in status.splitlines():
-        path = line[3:].strip().strip('"')
+        path = line[3:].strip().strip('"')  # формат porcelain: «XY путь»
         if " -> " in path:  # переименование
             path = path.split(" -> ", 1)[1]
-        if path in ignored or path.startswith("reports/"):
-            continue
-        dirty = True
-        break
-    return AgentVersion(__version__, commit=commit, tag=tag, dirty=dirty)
+        if path and path not in ignored and not path.startswith("reports/"):
+            return True
+    return False

@@ -130,3 +130,13 @@ def test_provider_priority_claude_then_openrouter_then_gemini(monkeypatch):
     assert s.fallback_models == ("gemini-3.5-flash", "gemini-flash-lite-latest")
     monkeypatch.setenv("LLM_FALLBACK_MODELS", " a , b ,")
     assert load_settings().fallback_models == ("a", "b")
+
+
+def test_dirty_flag_ignores_reports_and_respects_porcelain_format():
+    from reqvalidator.version import _is_dirty
+
+    # Первая строка porcelain начинается с пробела — его нельзя срезать (так был баг с «eports/»).
+    assert not _is_dirty(" M reports/requirements-report.md\n M reports/requirements-report.json")
+    assert _is_dirty(" M reports/requirements-report.md\n M reqvalidator/pipeline.py")
+    assert _is_dirty("M  README.md")
+    assert not _is_dirty("")

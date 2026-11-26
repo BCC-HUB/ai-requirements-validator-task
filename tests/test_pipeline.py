@@ -250,6 +250,7 @@ def test_segmentation_guards_against_weak_model_output(fixtures):
     assert _literal_doc_id("Статус 401", "**401.** Ответ в случае", "...")
     assert not _literal_doc_id("Статус 401", "4010 строк", "...")
     assert not _literal_doc_id("REQ-4", "Критерии приемки", "req-1 req-2")
+    assert _literal_doc_id("Статус 404", "Для чужой карты возвращается 404", "...", "Для чужой\n**404**\n{}")
 
 
 def test_over_excluded_requirements_are_reconsidered(fixtures):

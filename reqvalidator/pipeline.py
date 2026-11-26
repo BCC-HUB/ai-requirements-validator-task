@@ -358,7 +358,8 @@ class Pipeline:
             if key in seen:
                 continue
             seen.add(key)
-            if it.doc_id and not _literal_doc_id(it.doc_id, ev.quote, doc_norm):
+            span = doc.text_of(max(1, ev.line_start - 1), ev.line_end or ev.line_start)
+            if it.doc_id and not _literal_doc_id(it.doc_id, ev.quote, doc_norm, span):
                 # Модель придумала идентификатор, которого нет в документе: в отчёт его не переносим.
                 self.warnings.append(f"Идентификатор «{it.doc_id}» не найден в документе и не использован")
                 it = it.model_copy(update={"doc_id": None})
@@ -915,11 +916,12 @@ class Pipeline:
 _ID_TAIL = re.compile(r"([A-Za-zА-Яа-яЁё]{0,8}-?\d+(?:\.\d+)*)\s*\.?\s*$")
 
 
-def _literal_doc_id(doc_id: str, quote: str, doc_norm: str) -> bool:
-    """Идентификатор считается настоящим, если он есть в тексте документа или им начинается цитата.
+def _literal_doc_id(doc_id: str, quote: str, doc_norm: str, span: str = "") -> bool:
+    """Идентификатор считается настоящим, если он есть в тексте документа или им начинается цитата
+    либо одна из строк самого требования (``span``).
 
     Второй случай — составные подписи вида «Логика работы метода, п. 4» или «Статус 401»,
-    где в документе написано «4. …» или «401. …».
+    где в документе написано «4. …», «401. …» или отдельная строка «**404**».
     """
     nid = normalize(doc_id).strip(" .")
     if nid and nid in doc_norm:
@@ -928,7 +930,10 @@ def _literal_doc_id(doc_id: str, quote: str, doc_norm: str) -> bool:
     if not m:
         return False
     tail = normalize(m.group(1))
-    return bool(tail) and re.match(rf"^{re.escape(tail)}(?![\w-])", normalize(quote)) is not None
+    if not tail:
+        return False
+    starts = re.compile(rf"^{re.escape(tail)}(?![\w-])")
+    return any(starts.match(normalize(text)) for text in [quote, *span.splitlines()])
 
 
 _REQ_WORDS = re.compile(
